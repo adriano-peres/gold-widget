@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.bak
+last_price.json
+widget.log
