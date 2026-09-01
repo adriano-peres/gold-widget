@@ -46,6 +46,31 @@ v5.3:
     China segue online com idade própria. Cache salvo em todo ciclo.
   * Lock entre poller e "Atualizar agora"; save_cache atômico
     (.tmp + os.replace); --dump tolera pct nulo.
+v5.4 (ALTERAÇÃO LOCAL — não enviada ao repositório):
+  * NOVO — seção "EUA · COMBUSTÍVEL": média semanal de VAREJO (bomba) da
+    gasolina regular e do diesel on-highway nos EUA, em US$/gal com impostos.
+   Fonte grátis sem chave: AmericasOilWatch /api/v1/us-prices, que replica
+   as séries EIA EMM_EPMR / EMD_EPD2D (rota petroleum/pri/gnd).
+v5.5 (ALTERAÇÃO LOCAL — não enviada ao repositório):
+   * NOVO — fallback do combustível EUA (antes fonte única). Cadeia inteira
+     de VAREJO de bomba com impostos (média nacional semanal; nada de
+     atacado/platts/barril):
+       - AmericasOilWatch                    [principal, como no v5.4]
+       - EIA dnav oficial (HTML semanal)     [mesmas séries, fonte raiz]
+       - FRED fredgraph.csv (GASREGW)        [cobre só a gasolina; o FRED
+         não publica diesel de varejo]
+       - EIA API v2 (petroleum/pri/gnd)      [se EIA_API_KEY no ambiente;
+         chave grátis em eia.gov/opendata/register.php]
+   * Cache de combustível vence após 14 dias (2 releases semanais
+     perdidas), mesmo padrão das barras de banco (24 h).
+v5.6 (fusão das forks local + instalada):
+   * NOVO — seção "COMEX · FUTURO (GC=F)" (que só existia na cópia
+     instalada): futuro ouro contínuo via chart do Yahoo Finance (grátis,
+     sem chave), USD/oz, variação vs fechamento anterior e contango vs
+     spot. O contínuo rola sozinho p/ o contrato mais líquido (dez/26;
+     em nov/dez, fev/27). Falha isoladamente; marca "(cache)" após
+     FUT_STALE (10 min).
+   * O repo passa a ter TUDO: spot+China+COMEX+combustível EUA (v5.5).
 v4: BRL por grama; camada desktop; polling 90 s; backoff 429; baseline PAXG.
 Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
 """
@@ -59,7 +84,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 try:
     import tkinter as tk
@@ -113,6 +138,28 @@ SINA_FUT_CODE = "nf_AU0"                             # futuro SHFE ouro (main) n
 BANKS_MAX_AGE = 24 * 3600                            # cache de barras vale 24h
 FX_MAX_AGE    = 15 * 60                              # câmbio mais velho que isso não deriva
 
+# v5.6 — futuro COMEX (contrato contínuo GC=F) via chart do Yahoo
+YAHOO_GC_URL  = ("https://query1.finance.yahoo.com/v8/finance/chart/GC=F"
+                 "?interval=1d&range=5d")            # 5 barras: atual + anteriores
+FUT_STALE     = 10 * 60                              # acima disso mostra "(cache)"
+MONTH_PT      = {"Jan": "jan", "Feb": "fev", "Mar": "mar", "Apr": "abr",
+                 "May": "mai", "Jun": "jun", "Jul": "jul", "Aug": "ago",
+                 "Sep": "set", "Oct": "out", "Nov": "nov", "Dec": "dez"}
+
+# ----------------- CONFIG · COMBUSTÍVEL EUA (média de varejo) --------------
+# Todas as fontes são a MESMA métrica: média nacional semanal de BOMBA
+# (varejo, com impostos) da EIA — gasolina regular (EMM_EPMR_PTE_NUS_DPG)
+# e diesel on-highway (EMD_EPD2D_PTE_NUS_DPG). Nada de atacado.
+AOW_URL       = "https://americasoilwatch.com/api/v1/us-prices"
+EIA_DNAV_FMT  = ("https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx"
+                 "?n=PET&s={series}&f=W")          # página oficial (HTML)
+EIA_DNAV_GAS  = "EMM_EPMR_PTE_NUS_DPG"             # gasolina regular varejo
+EIA_DNAV_DIE  = "EMD_EPD2D_PTE_NUS_DPG"            # diesel on-highway varejo
+FRED_GAS_URL  = ("https://fred.stlouisfed.org/graph/fredgraph.csv"
+                 "?id=GASREGW&cosd={date}")        # espelho FRED: só gasolina
+EIA_V2_URL    = "https://api.eia.gov/v2/petroleum/pri/gnd/data/"
+FUEL_MAX_AGE  = 14 * 86400                         # cache vence (2 releases)
+
 # Tradução dos nomes em chinês vindos da xxapi (fonte CJK não é necessária)
 BANK_TR = {
     "工商银行如意金条": "ICBC Ruyi",
@@ -159,17 +206,24 @@ def fmt_pct(p):
 def _has_cjk(s):
     return any("\u4e00" <= ch <= "\u9fff" for ch in s)
 
+def _chg_pct(price, chg):
+    """Variação % (semanal) a partir do delta absoluto em US$/gal."""
+    base = (price - chg) if price is not None and chg is not None else None
+    if not base:
+        return None
+    return chg / base * 100.0
+
 # ------------------------------- HTTP -----------------------------------
-def _http_get(url, headers=None):
-    hdrs = {"User-Agent": "gold-widget/5.0"}
+def _http_get(url, headers=None, timeout=NET_TIMEOUT):
+    hdrs = {"User-Agent": "gold-widget/5.0", "Accept": "*/*"}
     if headers:
         hdrs.update(headers)
     req = urllib.request.Request(url, headers=hdrs)
-    with urllib.request.urlopen(req, timeout=NET_TIMEOUT) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
 
-def _get_json(url, headers=None):
-    return json.loads(_http_get(url, headers).decode("utf-8"))
+def _get_json(url, headers=None, timeout=NET_TIMEOUT):
+    return json.loads(_http_get(url, headers, timeout).decode("utf-8"))
 
 # --------------------- FETCH · FONTES ORIGINAIS (v4) ---------------------
 def fetch_price(symbol):
@@ -303,6 +357,29 @@ def fetch_goldprice_org(curr="USD"):
             "pct": _to_float(it.get("pcXau")),
             "prev_close": _to_float(it.get("xauClose"))}
 
+def fetch_gc_future():
+    """Futuro COMEX ouro contínuo (GC=F) pelo chart do Yahoo (grátis, sem
+    chave). GC=F acompanha o contrato mais líquido (hoje dez/26; rola sozinho
+    no vencimento). Preço = regularMarketPrice; referência = fech. anterior.
+    range=5d dá barras suficientes p/ achar o fechamento da sessão anterior."""
+    d = _get_json(YAHOO_GC_URL, {"User-Agent": BROWSER_UA})
+    res = ((d.get("chart") or {}).get("result") or [])
+    if not res:
+        raise ValueError("Yahoo GC=F sem resultado")
+    m = res[0].get("meta") or {}
+    closes = [c for c in ((((res[0].get("indicators") or {}).get("quote")
+                            or [{}])[0]).get("close") or []) if c is not None]
+    price = m.get("regularMarketPrice")
+    if price is None and closes:
+        price = closes[-1]
+    prev = closes[-2] if len(closes) >= 2 else m.get("chartPreviousClose")
+    price, prev = _to_float(price), _to_float(prev)
+    if not price or not prev or price <= 0 or prev <= 0:
+        raise ValueError("Yahoo GC=F sem preço válido")
+    return {"price": price, "prev_close": prev,
+            "pct": (price / prev - 1.0) * 100.0,
+            "name": m.get("shortName") or "", "ts": time.time()}
+
 def fetch_sina_future():
     """Futuro SHFE ouro (nf_AU0, contrato main) direto da Sina.
     Campos nf_: [1]hora [2]abert. [3]máx [4]mín [8]último [10]liquidação ant."""
@@ -400,6 +477,175 @@ def fetch_xxapi():
             name = f"Banco {i+1}"
         banks.append({"name": name, "cny_g": p})
     return {"banks": banks}
+
+_NAV_MON = {m: i for i, m in enumerate(
+    ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
+     "Sep", "Oct", "Nov", "Dec"), 1)}
+
+def _parse_dnav(html):
+    """Tabela semanal do dnav (EIA) -> [(data, US$/gal)] crescente.
+    Cada <tr> traz o mês/ano (célula B6) e pares data (B5) / preço (B3)."""
+    pat = (r"class=['\"]B5['\"]>\s*(\d{2})/(\d{2})\s*&nbsp;</td>\s*"
+           r"<td[^>]*class=['\"]B3['\"]>\s*([0-9]+\.[0-9]+)")
+    out = {}
+    for tr in re.findall(r"<tr>(.*?)</tr>", html, re.S):
+        ym = re.search(r"(\d{4})-([A-Za-z]{3})\s*<", tr)
+        if not ym:
+            continue
+        y, mo = int(ym.group(1)), _NAV_MON.get(ym.group(2))
+        if not mo:
+            continue
+        for m, dd, v in re.findall(pat, tr):
+            try:
+                out[datetime(y, mo, int(dd))] = float(v)
+            except ValueError:
+                continue
+    return sorted(out.items())
+
+def _fuel_weeks(hist):
+    """((última semana, preço), (penúltima, preço)) ou None se <2 semanas."""
+    if len(hist) < 2:
+        return None
+    return hist[-1], hist[-2]
+
+def _us_fuel_aow():
+    """Principal: AmericasOilWatch (JSON pronto, replica as séries EIA)."""
+    d = _get_json(AOW_URL)
+    gas, die = _to_float(d.get("gasolineUsdGal")), _to_float(d.get("dieselUsdGal"))
+    if not gas or not die or gas <= 0 or die <= 0:
+        raise ValueError("resposta sem preço válido")
+    return {"gas": gas, "gas_chg": _to_float(d.get("gasolineChangeUsdGal")),
+            "diesel": die, "diesel_chg": _to_float(d.get("dieselChangeUsdGal")),
+            "week": d.get("weekEnding"), "prov": "EIA via AmericasOilWatch"}
+
+def _us_fuel_dnav():
+    """Fallback 1: página oficial da EIA (dnav) com a tabela semanal das
+    MESMAS séries de varejo. Variação semanal = vs semana anterior."""
+    out, weeks, got = {}, [], 0
+    for series, key in ((EIA_DNAV_GAS, "gas"), (EIA_DNAV_DIE, "diesel")):
+        try:
+            # dnav é lento via urllib (~10s); fallback merece timeout frouxo
+            html = _http_get(EIA_DNAV_FMT.format(series=series),
+                             {"User-Agent": BROWSER_UA},
+                             timeout=30).decode("windows-1252", "replace")
+            wk = _fuel_weeks(_parse_dnav(html))
+            if not wk:
+                raise ValueError("tabela sem semanas suficientes")
+        except Exception as e:
+            log(f"dnav {series} indisponível: {e}")
+            continue
+        (d1, v1), (d0, v0) = wk
+        out[key] = v1
+        out[key + "_chg"] = round(v1 - v0, 3)
+        weeks.append(d1.strftime("%Y-%m-%d"))
+        got += 1
+    if not got:
+        raise ValueError("nenhuma série disponível")
+    if weeks:
+        out["week"] = max(weeks)
+    out["prov"] = "EIA dnav"
+    return out
+
+def _us_fuel_fred():
+    """Fallback 2: FRED (fredgraph.csv, sem chave) espelha a gasolina
+    regular semanal da EIA. Não cobre diesel (FRED não tem a série)."""
+    cosd = (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%d")
+    txt = _http_get(FRED_GAS_URL.format(date=cosd), timeout=30).decode(
+        "utf-8", "replace")
+    hist = []
+    for ln in txt.splitlines()[1:]:          # 1ª linha é o cabeçalho
+        parts = ln.split(",")
+        if len(parts) == 2 and parts[1] not in (".", ""):
+            try:
+                hist.append((datetime.strptime(parts[0], "%Y-%m-%d"),
+                             float(parts[1])))
+            except ValueError:
+                continue
+    wk = _fuel_weeks(sorted(hist))
+    if not wk:
+        raise ValueError("CSV sem semanas suficientes")
+    (d1, v1), (d0, v0) = wk
+    return {"gas": v1, "gas_chg": round(v1 - v0, 3),
+            "week": d1.strftime("%Y-%m-%d"), "prov": "FRED"}
+
+def _us_fuel_eia_v2(key):
+    """Fallback 3: API oficial da EIA (v2). Exige chave grátis registrada
+    na variável de ambiente EIA_API_KEY (eia.gov/opendata/register.php)."""
+    q = urllib.parse.urlencode({
+        "api_key": key, "frequency": "weekly", "data[0]": "value",
+        "facets[series][]": [EIA_DNAV_GAS, EIA_DNAV_DIE],
+        "sort[0][column]": "period", "sort[0][direction]": "desc",
+        "length": "10"})
+    d = _get_json(EIA_V2_URL + "?" + q)
+    rows = (d.get("response") or {}).get("data") or []
+    out, weeks, got = {}, [], 0
+    for series, key2 in ((EIA_DNAV_GAS, "gas"), (EIA_DNAV_DIE, "diesel")):
+        vals = sorted((r.get("period"), _to_float(r.get("value")))
+                      for r in rows if r.get("series") == series)
+        vals = [(p, v) for p, v in vals if p and v and v > 0]
+        wk = _fuel_weeks(vals)
+        if not wk:
+            log(f"EIA v2 {series} indisponível: sem dados")
+            continue
+        (p1, v1), (p0, v0) = wk
+        out[key2] = v1
+        out[key2 + "_chg"] = round(v1 - v0, 3)
+        weeks.append(p1)
+        got += 1
+    if not got:
+        raise ValueError("nenhuma série disponível")
+    if weeks:
+        out["week"] = max(weeks)
+    out["prov"] = "EIA API"
+    return out
+
+def _merge_fuel(base, extra):
+    """Preenche lacunas (gas/diesel) sem sobrescrever o que já veio antes."""
+    if not base:
+        return extra
+    for k in ("gas", "gas_chg", "diesel", "diesel_chg"):
+        if base.get(k) is None and extra.get(k) is not None:
+            base[k] = extra[k]
+    wks = [w for w in (base.get("week"), extra.get("week")) if w]
+    if wks:
+        base["week"] = max(wks)
+    return base
+
+def fetch_us_fuel():
+    """Média semanal de VAREJO (bomba) nos EUA: gasolina regular e diesel
+    on-highway, US$/gal com impostos — nada de atacado. Cadeia:
+    AmericasOilWatch -> EIA dnav (HTML oficial) -> FRED (só gasolina)
+    -> EIA API v2 (se EIA_API_KEY). Cada estágio preenche só o que falta."""
+    out, provs, errs = {}, [], []
+    try:
+        out = _us_fuel_aow()
+        provs.append(out.pop("prov"))
+    except Exception as e:
+        errs.append(f"AOW: {e}")
+    if not (out.get("gas") and out.get("diesel")):
+        try:
+            out = _merge_fuel(out, _us_fuel_dnav())
+            provs.append(out.pop("prov", "EIA dnav"))
+        except Exception as e:
+            errs.append(f"EIA dnav: {e}")
+    if out.get("gas") is None:
+        try:
+            out = _merge_fuel(out, _us_fuel_fred())
+            provs.append(out.pop("prov", "FRED"))
+        except Exception as e:
+            errs.append(f"FRED: {e}")
+    if (not (out.get("gas") and out.get("diesel"))
+            and os.environ.get("EIA_API_KEY")):
+        try:
+            out = _merge_fuel(out, _us_fuel_eia_v2(os.environ["EIA_API_KEY"]))
+            provs.append(out.pop("prov", "EIA API"))
+        except Exception as e:
+            errs.append(f"EIA API: {e}")
+    if out.get("gas") is None and out.get("diesel") is None:
+        raise RuntimeError("combustível sem fonte viva (" + "; ".join(errs) + ")")
+    out["src"] = " + ".join(provs) if provs else "EIA"
+    out["ts"] = time.time()
+    return out
 
 def collect_china(last):
     """Popula last['fx'] e last['china'] com TODAS as fontes chinesas; cada
@@ -708,6 +954,30 @@ class GoldWidget:
                               font=("DejaVu Sans", 8))
         self.l_sub.pack(anchor="w", padx=12, pady=(0, 8))
 
+        # ------------------ seção FUTURO COMEX (v5.6) ---------------------
+        self.fut_frame = tk.Frame(self.frame, bg=BG)
+        self.fut_frame.pack(anchor="w", padx=12, fill="x")
+        lh_fut = tk.Label(self.fut_frame, text="── COMEX · FUTURO (GC=F) ──",
+                          bg=BG, fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                          anchor="w")
+        lh_fut.grid(row=0, column=0, columnspan=3, sticky="w", pady=(7, 1))
+        self.l_fut_name = tk.Label(self.fut_frame, text="—", bg=BG,
+                                   fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                   anchor="w")
+        self.l_fut_price = tk.Label(self.fut_frame, text="", bg=BG,
+                                    fg=TXT_USD,
+                                    font=("DejaVu Sans", 8, "bold"),
+                                    anchor="e")
+        self.l_fut_pct = tk.Label(self.fut_frame, text="", bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="e")
+        self.l_fut_name.grid(row=1, column=0, sticky="w")
+        self.l_fut_price.grid(row=1, column=1, sticky="e", padx=(16, 6))
+        self.l_fut_pct.grid(row=1, column=2, sticky="e")
+        self.fut_frame.columnconfigure(0, weight=1)
+        for w in (lh_fut, self.l_fut_name, self.l_fut_price, self.l_fut_pct):
+            self._bind(w)
+
         # ----------------------- seção CHINA (v5) -------------------------
         self.china_frame = tk.Frame(self.frame, bg=BG)
         self.china_frame.pack(anchor="w", padx=12, fill="x")
@@ -716,6 +986,15 @@ class GoldWidget:
         self.l_china_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
                                     font=("DejaVu Sans", 7))
         self.l_china_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
+        # --------------- seção EUA · COMBUSTÍVEL (média de varejo) ---------
+        self.us_frame = tk.Frame(self.frame, bg=BG)
+        self.us_frame.pack(anchor="w", padx=12, fill="x")
+        self._us_sig = None
+        self._us_refs = []
+        self.l_us_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+                                 font=("DejaVu Sans", 7))
+        self.l_us_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # ----------------------- menu de botão direito ----------------------
         self.menu = tk.Menu(root, tearoff=0)
@@ -848,6 +1127,24 @@ class GoldWidget:
         sina_xau = collect_china(self.last)
         fx = self.last.get("fx")
 
+        # ---- Futuro COMEX GC=F (v5.6): falha isolada, mantém cache ----
+        try:
+            self.last["gc_fut"] = fetch_gc_future()
+        except Exception as e:
+            log(f"Yahoo GC=F indisponível: {e}")
+
+        # ---- EUA · combustível (média de varejo): falha isolada ----
+        try:
+            self.last["us_fuel"] = fetch_us_fuel()
+        except Exception as e:
+            log(f"combustível EUA indisponível ({e}); mantendo cache")
+        # combustível: cache vence após 14 dias (2 releases semanais), igual
+        # às barras de banco — evita preço velho na tela
+        uf = self.last.get("us_fuel")
+        if uf and time.time() - uf.get("ts", 0) > FUEL_MAX_AGE:
+            self.last.pop("us_fuel", None)
+            log("combustível EUA: cache >14 dias sem fonte; removido")
+
         usd_ok = False
         if usd:
             self.last["usd_price"] = usd["price"]
@@ -971,9 +1268,14 @@ class GoldWidget:
                                    fg=UP_COLOR if s >= 0 else DOWN_COLOR)
             self._render_sub()
 
-        # seção China (v5) — sempre renderiza, mesmo sem o spot principal
+        # seções Futuro COMEX + China — sempre renderizam, mesmo sem spot
+        self._render_fut()
         self._render_china()
         self._render_china_sub()
+
+        # seção EUA · combustível (v5.4 local)
+        self._render_us()
+        self._render_us_sub()
 
         # re-encosta no canto com a largura real (a menos que o user arrastou)
         if not self._user_moved:
@@ -994,6 +1296,38 @@ class GoldWidget:
         if src and src != "goldprice.dev":
             sub += f" · fonte: {src}"
         self.l_sub.config(text=sub, fg=TXT_DIM)
+
+    # ------------------ exibição · seção FUTURO COMEX (v5.6) --------------
+    def _fut_label(self, rec=None):
+        """Nome amigável: 'GC=F · dez/26 · contango +64' (+ '(cache)')."""
+        rec = rec or {}
+        nome = "GC=F"
+        parts = (rec.get("name") or "").split()
+        if len(parts) >= 3:                      # ex.: "Gold Dec 26"
+            mes = MONTH_PT.get(parts[-2], parts[-2].lower())
+            nome += f" · {mes}/{parts[-1]}"
+        spot = self.last.get("usd_price")
+        if rec.get("price") and spot:
+            cont = rec["price"] - spot
+            nome += f" · contango {cont:+.0f}"
+        if rec.get("ts") and time.time() - rec["ts"] > FUT_STALE:
+            nome += " · (cache)"
+        return nome
+
+    def _render_fut(self):
+        r = self.last.get("gc_fut")
+        self.l_fut_name.config(text=self._fut_label(r))
+        if not r or not r.get("price"):
+            self.l_fut_price.config(text="—", fg=TXT_USD)
+            self.l_fut_pct.config(text="")
+            return
+        self.l_fut_price.config(text=f"US$ {fmt_usd(r['price'])}", fg=TXT_USD)
+        p = r.get("pct")
+        if p is None:
+            self.l_fut_pct.config(text="")
+        else:
+            self.l_fut_pct.config(text=fmt_pct(p),
+                                  fg=UP_COLOR if p >= 0 else DOWN_COLOR)
 
     # --------------------- exibição · seção CHINA (v5) --------------------
     def _china_rows(self):
@@ -1095,11 +1429,89 @@ class GoldWidget:
             parts.append(f"China há {age}s")
         self.l_china_sub.config(text=" · ".join(parts), fg=TXT_DIM)
 
+    # ----------------- exibição · seção EUA · COMBUSTÍVEL (local) ---------
+    def _us_rows(self):
+        d = self.last.get("us_fuel") or {}
+        rows = []
+        if d.get("gas") or d.get("diesel"):
+            rows.append((("h", "── EUA · COMBUSTÍVEL (MÉDIA VAREJO) ──"),
+                         None, None))
+            if d.get("gas"):
+                rows.append((("r", "Gasolina (regular)", True),
+                             f"US$ {d['gas']:,.3f}/gal",
+                             _chg_pct(d.get("gas"), d.get("gas_chg"))))
+            if d.get("diesel"):
+                rows.append((("r", "Diesel (on-highway)", True),
+                             f"US$ {d['diesel']:,.3f}/gal",
+                             _chg_pct(d.get("diesel"), d.get("diesel_chg"))))
+        return rows
+
+    def _render_us(self):
+        rows = self._us_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._us_sig:
+            for w in self.us_frame.winfo_children():
+                w.destroy()
+            self._us_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.us_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._us_refs.append(("h", lab))
+                else:
+                    ln = tk.Label(self.us_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.us_frame, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.us_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w)
+                    self._us_refs.append(("r", ln, lp, lv))
+                grid += 1
+            self.us_frame.columnconfigure(0, weight=1)
+            self._us_sig = sig
+
+        for ref, r in zip(self._us_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, pct = r[1], r[2]
+            lp.config(text=price_str, fg=TXT_USD)
+            if pct is None:
+                lv.config(text="")
+            else:
+                lv.config(text=fmt_pct(pct),
+                          fg=UP_COLOR if pct >= 0 else DOWN_COLOR)
+
+    def _render_us_sub(self):
+        d = self.last.get("us_fuel") or {}
+        parts = []
+        if d.get("week"):
+            parts.append(f"semana {d['week']} · {d.get('src', 'EIA')}")
+        ts = d.get("ts")
+        if ts:
+            age = max(0, int(time.time() - ts))
+            parts.append(f"atualizado há {age}s")
+        self.l_us_sub.config(text=" · ".join(parts), fg=TXT_DIM)
+
     def _tick(self):
         if self.stop.is_set():
             return
         self._render_sub()
+        self._render_fut()          # reavalia idade/cache do GC=F
         self._render_china_sub()
+        self._render_us_sub()
         self.root.after(5000, self._tick)
 
     # ----------------------------- saída --------------------------------
@@ -1133,6 +1545,32 @@ def dump():
         pct = (f" ({sina_xau['pct']:+.2f}% no dia)"
                if sina_xau.get("pct") is not None else "")
         print(f"Sina hf_XAU (spot Londres USD): {sina_xau['price']:,.2f}{pct}")
+
+    try:
+        g = fetch_gc_future()
+        print(f"Yahoo GC=F ({g['name']}) futuro COMEX: {g['price']:,.2f} "
+              f"(fech. ant. {g['prev_close']:,.2f} · {g['pct']:+.2f}%)")
+    except Exception as e:
+        print(f"Yahoo GC=F: FALHOU ({e})")
+
+    try:
+        f = fetch_us_fuel()
+        last["us_fuel"] = f
+        precos = []
+        if f.get("gas"):
+            precos.append(f"gasolina {f['gas']:.3f} US$/gal")
+        if f.get("diesel"):
+            precos.append(f"diesel {f['diesel']:.3f} US$/gal")
+        chgs = []
+        for fuel, chg in (("gasolina", f.get("gas_chg")),
+                          ("diesel", f.get("diesel_chg"))):
+            if chg is not None:
+                chgs.append(f"{fuel} {chg:+.3f}")
+        chg_s = f" (Δ semana: {', '.join(chgs)})" if chgs else ""
+        print(f"US FUEL [{f.get('src', 'EIA')}]: "
+              f"{' · '.join(precos)} (semana {f.get('week')}){chg_s}")
+    except Exception as e:
+        print(f"US FUEL: FALHOU ({e})")
 
     d = last.get("china") or {}
     cnybrl = (fx or {}).get("cnybrl")
@@ -1172,7 +1610,8 @@ def main():
         print("Sem display gráfico (DISPLAY não definido).", file=sys.stderr)
         return 1
 
-    log("iniciando widget (v5.3: fallbacks totais + frescor de câmbio)")
+    log("iniciando widget (v5.6: fallbacks totais + combustível EUA + "
+        "futuro COMEX GC=F)")
     root = tk.Tk()
     GoldWidget(root)
     root.mainloop()
