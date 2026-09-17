@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.x-3776AB?logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/plataforma-Linux%20%C2%B7%20X11-FCC624?logo=linux&logoColor=black)
 ![Dependências](https://img.shields.io/badge/depend%C3%AAncias-somente%20stdlib-00A86B)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-v5.6-c9a227)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-v6.0-c9a227)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20pessoal-lightgrey)
 
 Widget de desktop em **Python puro** (tkinter) que mostra o **preço do ouro spot em tempo real** direto na sua área de trabalho — em **USD/onça** e **R$/grama** — além de um painel completo com as cotações do mercado chinês de ouro (SGE, SHFE, referência China Gold e barras de ouro dos grandes bancos), o **futuro COMEX (GC=F)** e a **média semanal de varejo dos combustíveis nos EUA** (gasolina e diesel de bomba, US$/gal).
@@ -181,8 +181,10 @@ O polling roda em thread separada a cada **90 s** (abaixo do teto anônimo de ~1
 |---|---|
 | **Arrastar** com o botão esquerdo | move o widget para onde quiser |
 | **Duplo clique** | encosta no canto superior direito |
+| **Clique simples** num valor | abre o popup com o gráfico do ativo (período 7D–1A ajustável) |
 | **Botão direito** | abre o menu |
 | Menu → *Atualizar agora* | força um refresh imediato (não empilha com o poller em curso) |
+| Menu → *Ver gráfico* | abre o gráfico de qualquer ativo sem precisar clicar nele |
 | Menu → *Manter no topo* | alterna entre ficar sob as janelas (padrão) e sempre visível |
 | Menu → *Encostar no canto* | volta para a posição padrão |
 | Menu → *Sair* | encerra |
