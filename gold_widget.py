@@ -312,6 +312,29 @@ v5.8:
         e transport error testados); ProFinance sem Urals; FRED/EIA/IMF/
         Pink Sheet mensais. Tempo real verdadeiro exige terminal pago
         (Bloomberg/Reuters/Argus/Platts).
+  v7.1 (ESTA VERSAO, a pedido do usuário):
+      * NOVO — janela REDIMENSIONÁVEL: arrastar a borda/canto invisível
+        (6px nas bordas, 14px nos cantos; cursor muda por direção; nada
+        aparece na UI). Resize DIRECIONAL: bordas oeste/norte movem a
+        janela e ancoram o lado oposto (clamp reposiciona junto). Mínimo
+        200x150 ("só o título visível"), máximo = tela. O TEXTO NÃO
+        ESCALA: o conteúdo só reflowa.
+      * NOVO — rolagem OCULTA: todo o conteúdo vive num frame interno
+        dentro de um Canvas (body). SEM scrollbar na UI; quando o
+        conteúdo não couber, a roda do mouse rola (wheel p/ vertical,
+        Shift+wheel p/ horizontal; 1 passo = 1/10 da janela). Sem
+        overflow: wheel ignorado e view presa no topo. Bind no toplevel
+        cobre os labels criados dinamicamente; popups de gráfico (outro
+        Toplevel) não são afetados.
+      * NOVO — tamanho PERSISTENTE: last["win"] = {w,h} no cache normal
+        (save_cache atômico já existente); restaurado no boot com clamp
+        de tela. "Encostar no canto" (menu/duplo-clique) respeita o
+        tamanho escolhido.
+      * Nota de implementação: alças de resize são Frames translúcidos
+        (bg igual ao fundo) filhos do frame da borda, com nome Tk
+        explícito (edge_r/l/b/t, grip_se/sw/ne/nw) para debug/hit-test;
+        guardas _resizing nos handlers de arraste (bindtags do toplevel
+        disparavam o mover-janela junto com o resize).
 Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
  """
 
@@ -360,6 +383,12 @@ LOG_FILE      = os.path.join(STATE_DIR, "widget.log")
 MARGIN        = 16                                 # distância da borda lateral
 MARGIN_Y      = 40                                 # abaixo da barra do topo
 TROY_OZ_GRAMS = 31.1034768                         # 1 onça troy em gramas
+# v7.1 — janela redimensionável (arrastar borda/canto INVISÍVEL) + rolagem
+# oculta (wheel, sem barra na UI) quando o conteúdo não couber. O texto NÃO
+# muda de tamanho: a janela apenas revela/esconde conteúdo via rolagem.
+MIN_W         = 200                                # largura mínima (só o título visível)
+MIN_H         = 150                                # altura mínima
+EDGE_PX       = 6                                  # espessura da área de resize (invisível)
 
 # ------------------------ CONFIG · FONTES CHINA ------------------------
 SINA_URL_FMT  = "https://hq.sinajs.cn/list={codes}"
@@ -3186,11 +3215,23 @@ class GoldWidget:
                               highlightbackground=BORDER)
         self.frame.pack(fill="both", expand=True)
 
-        self.l_title = tk.Label(self.frame, text="OURO · SPOT", bg=BG,
+        # v7.1 — rolagem oculta: o conteúdo inteiro vive num frame interno
+        # (self.body) dentro de um Canvas. NÃO há scrollbar na UI: quando o
+        # conteúdo não couber, a roda do mouse rola (yview/xview direto).
+        self.canvas = tk.Canvas(self.frame, bg=BG, highlightthickness=0,
+                                bd=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.body = tk.Frame(self.canvas, bg=BG)
+        self._body_win = self.canvas.create_window(
+            0, 0, window=self.body, anchor="nw")
+        self.canvas.bind("<Configure>", self._on_canvas_cfg)
+        self.body.bind("<Configure>", self._on_body_cfg)
+
+        self.l_title = tk.Label(self.body, text="OURO · SPOT", bg=BG,
                                 fg=TITLE, font=("DejaVu Sans", 9, "bold"))
         self.l_title.pack(anchor="w", padx=12, pady=(8, 0))
 
-        row_usd = tk.Frame(self.frame, bg=BG)
+        row_usd = tk.Frame(self.body, bg=BG)
         row_usd.pack(anchor="w", padx=12)
         self.l_usd = tk.Label(row_usd, text="—", bg=BG, fg=TXT_USD,
                               font=("DejaVu Sans", 22, "bold"))
@@ -3202,7 +3243,7 @@ class GoldWidget:
                                        font=("DejaVu Sans", 10, "bold"))
         self.l_usd_var_week.pack(side="left", padx=(8, 0), pady=(10, 0))
 
-        row_brl = tk.Frame(self.frame, bg=BG)
+        row_brl = tk.Frame(self.body, bg=BG)
         row_brl.pack(anchor="w", padx=12)
         self.l_brl = tk.Label(row_brl, text="—", bg=BG, fg=TXT_BRL,
                               font=("DejaVu Sans", 13, "bold"))
@@ -3214,7 +3255,7 @@ class GoldWidget:
                                        font=("DejaVu Sans", 9, "bold"))
         self.l_brl_var_week.pack(side="left", padx=(8, 0), pady=(4, 0))
 
-        self.l_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                               font=("DejaVu Sans", 8))
         self.l_sub.pack(anchor="w", padx=12, pady=(0, 8))
 
@@ -3223,83 +3264,83 @@ class GoldWidget:
         # (BOLSAS SGE/SHFE + REFERÊNCIA Base China Gold + BARRAS DE BANCO)
 
         # --------------- seção EUA · COMBUSTÍVEL (média de varejo) ---------
-        self.us_frame = tk.Frame(self.frame, bg=BG)
+        self.us_frame = tk.Frame(self.body, bg=BG)
         self.us_frame.pack(anchor="w", padx=12, fill="x")
         self._us_sig = None
         self._us_refs = []
-        self.l_us_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_us_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                  font=("DejaVu Sans", 7))
         self.l_us_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # ---------------- seção BRASIL · CDS 5 ANOS (v5.7) ----------------
-        self.cds_frame = tk.Frame(self.frame, bg=BG)
+        self.cds_frame = tk.Frame(self.body, bg=BG)
         self.cds_frame.pack(anchor="w", padx=12, fill="x")
         self._cds_sig = None
         self._cds_refs = []
-        self.l_cds_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_cds_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                   font=("DejaVu Sans", 7))
         self.l_cds_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # --------------- seção NYMEX · DIESEL HO=F (v6.1) -----------------
-        self.ho_frame = tk.Frame(self.frame, bg=BG)
+        self.ho_frame = tk.Frame(self.body, bg=BG)
         self.ho_frame.pack(anchor="w", padx=12, fill="x")
         self._ho_sig = None
         self._ho_refs = []
-        self.l_ho_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_ho_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                  font=("DejaVu Sans", 7))
         self.l_ho_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # -------------- seção BRENT · CRUDE (benchmark, v6.3) --------------
-        self.brent_frame = tk.Frame(self.frame, bg=BG)
+        self.brent_frame = tk.Frame(self.body, bg=BG)
         self.brent_frame.pack(anchor="w", padx=12, fill="x")
         self._brent_sig = None
         self._brent_refs = []
-        self.l_brent_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_brent_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                     font=("DejaVu Sans", 7))
         self.l_brent_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # ------------- seção CHINA · CRUDE SC (XANGAI, v6.8) ---------------
-        self.sc_frame = tk.Frame(self.frame, bg=BG)
+        self.sc_frame = tk.Frame(self.body, bg=BG)
         self.sc_frame.pack(anchor="w", padx=12, fill="x")
         self._sc_sig = None
         self._sc_refs = []
-        self.l_sc_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_sc_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                  font=("DejaVu Sans", 7))
         self.l_sc_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # ------------- seção EMIRADOS · CRUDE MURBAN (v6.9) ----------------
-        self.murban_frame = tk.Frame(self.frame, bg=BG)
+        self.murban_frame = tk.Frame(self.body, bg=BG)
         self.murban_frame.pack(anchor="w", padx=12, fill="x")
         self._murban_sig = None
         self._murban_refs = []
-        self.l_murban_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_murban_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                      font=("DejaVu Sans", 7))
         self.l_murban_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # --------------- seção RÚSSIA · CRUDE URALS (v6.2) ----------------
-        self.urals_frame = tk.Frame(self.frame, bg=BG)
+        self.urals_frame = tk.Frame(self.body, bg=BG)
         self.urals_frame.pack(anchor="w", padx=12, fill="x")
         self._urals_sig = None
         self._urals_refs = []
-        self.l_urals_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_urals_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                     font=("DejaVu Sans", 7))
         self.l_urals_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # ------------- seção FERTILIZANTE · UREIA (v6.6) -------------------
-        self.urea_frame = tk.Frame(self.frame, bg=BG)
+        self.urea_frame = tk.Frame(self.body, bg=BG)
         self.urea_frame.pack(anchor="w", padx=12, fill="x")
         self._urea_sig = None
         self._urea_refs = []
-        self.l_urea_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_urea_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                    font=("DejaVu Sans", 7))
         self.l_urea_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # ---------------- seção ENXOFRE · SPOT CN (v6.7) -------------------
-        self.sulfur_frame = tk.Frame(self.frame, bg=BG)
+        self.sulfur_frame = tk.Frame(self.body, bg=BG)
         self.sulfur_frame.pack(anchor="w", padx=12, fill="x")
         self._sulfur_sig = None
         self._sulfur_refs = []
-        self.l_sulfur_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+        self.l_sulfur_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                      font=("DejaVu Sans", 7))
         self.l_sulfur_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
@@ -3337,7 +3378,8 @@ class GoldWidget:
         # ----------------------- arrastar com o mouse ------------------------
         self._drag_off = (0, 0)
         self._user_moved = False
-        for w, hk in ((root, None), (self.frame, None), (self.l_title, None),
+        for w, hk in ((root, None), (self.frame, None), (self.body, None),
+                         (self.canvas, None), (self.l_title, None),
                          (self.l_usd, "spot_usd"),
                          (self.l_usd_var, "spot_usd"),
                          (self.l_usd_var_week, "spot_usd"),
@@ -3352,6 +3394,75 @@ class GoldWidget:
                          (self.l_urals_sub, None), (self.l_urea_sub, None),
                          (self.l_sulfur_sub, None)):
             self._bind(w, hk)
+
+        # ------------- v7.1: rolagem oculta (wheel, sem scrollbar) ----------
+        # O bind no root vale para todo descendente (bindtags incluem o
+        # toplevel): cobre também os labels criados dinamicamente nos
+        # renders. Popups de grafico têm outro toplevel -> não interferem.
+        root.bind("<Button-4>", self._on_wheel)
+        root.bind("<Button-5>", self._on_wheel)
+        root.bind("<MouseWheel>", self._on_wheel)
+
+        # ---------- v7.1: resize por arraste (área INVISÍVEL, bordas) -------
+        # Faixas transparentes (bg igual ao fundo) nas 4 BORDAS e 4 CANTOS.
+        # O cursor muda ao passar por cima, mas nada aparece na UI. O
+        # tamanho escolhido é salvo no cache e restaurado no boot. O resize
+        # é direcional: arrastar a borda esquerda/superior move a janela e
+        # ancora o lado oposto (v7.1.1).
+        self._resizing = False
+        self._resize = None            # (x0, y0, w0, h0, wx0, wy0, modo)
+        self._win_size = None          # tamanho fixado pelo usuário (ou salvo)
+        G = EDGE_PX + 8                # área dos cantos
+        edge_r = tk.Frame(self.frame, name="edge_r", bg=BG,
+                          cursor="sb_h_double_arrow")
+        edge_r.place(relx=1.0, rely=0.0, anchor="ne",
+                     relheight=1.0, width=EDGE_PX)
+        edge_l = tk.Frame(self.frame, name="edge_l", bg=BG,
+                          cursor="sb_h_double_arrow")
+        edge_l.place(relx=0.0, rely=0.0, anchor="nw",
+                     relheight=1.0, width=EDGE_PX)
+        edge_b = tk.Frame(self.frame, name="edge_b", bg=BG,
+                          cursor="sb_v_double_arrow")
+        edge_b.place(relx=0.0, rely=1.0, anchor="sw",
+                     relwidth=1.0, height=EDGE_PX)
+        edge_t = tk.Frame(self.frame, name="edge_t", bg=BG,
+                          cursor="sb_v_double_arrow")
+        edge_t.place(relx=0.0, rely=0.0, anchor="nw",
+                     relwidth=1.0, height=EDGE_PX)
+        grip_se = tk.Frame(self.frame, name="grip_se", bg=BG,
+                           cursor="bottom_right_corner")
+        grip_se.place(relx=1.0, rely=1.0, anchor="se", width=G, height=G)
+        grip_sw = tk.Frame(self.frame, name="grip_sw", bg=BG,
+                           cursor="bottom_left_corner")
+        grip_sw.place(relx=0.0, rely=1.0, anchor="sw", width=G, height=G)
+        grip_ne = tk.Frame(self.frame, name="grip_ne", bg=BG,
+                           cursor="top_right_corner")
+        grip_ne.place(relx=1.0, rely=0.0, anchor="ne", width=G, height=G)
+        grip_nw = tk.Frame(self.frame, name="grip_nw", bg=BG,
+                           cursor="top_left_corner")
+        grip_nw.place(relx=0.0, rely=0.0, anchor="nw", width=G, height=G)
+        # cantos criados por último: ficam por cima das faixas de borda
+        for rz, mode in ((edge_r, "e"), (edge_l, "w"),
+                         (edge_b, "s"), (edge_t, "n"),
+                         (grip_se, "se"), (grip_sw, "sw"),
+                         (grip_ne, "ne"), (grip_nw, "nw")):
+            rz.bind("<Button-1>",
+                    lambda e, m=mode: self._resize_start(e, m))
+            rz.bind("<B1-Motion>", self._resize_motion)
+            rz.bind("<ButtonRelease-1>", self._resize_end)
+
+        # tamanho salvo em ciclo anterior (cache: last["win"])
+        try:
+            win = self.last.get("win") or {}
+            sw = int(win.get("w", 0))
+            sh = int(win.get("h", 0))
+        except Exception:
+            sw = sh = 0
+        if sw >= MIN_W and sh >= MIN_H:
+            sw = min(sw, root.winfo_screenwidth())
+            sh = min(sh, root.winfo_screenheight())
+            self._win_size = (sw, sh)
+            root.geometry(f"{sw}x{sh}")
 
         # posição inicial: canto superior direito
         self.snap_corner()
@@ -3473,11 +3584,128 @@ class GoldWidget:
     # ----------------------------- geometria -------------------------------
     def snap_corner(self):
         self.root.update_idletasks()
-        w = self.root.winfo_reqwidth()
-        h = self.root.winfo_reqheight()
+        # v7.1: se há tamanho fixado (salvo/resized), encosta por ele;
+        # senão usa o tamanho natural do conteúdo (comportamento antigo).
+        if self._win_size:
+            w, h = self._win_size
+        else:
+            w = self.root.winfo_reqwidth()
+            h = self.root.winfo_reqheight()
         x = self.root.winfo_screenwidth() - w - MARGIN
         y = MARGIN_Y
         self.root.geometry(f"+{x}+{y}")
+
+    # ---------------- v7.1: rolagem oculta + resize por arraste -------------
+    def _on_canvas_cfg(self, e):
+        """Canvas mudou de tamanho: o body interno acompanha a largura
+        (conteúdo reflowa; o texto NÃO escala) e a scrollregion é
+        recalculada."""
+        try:
+            self.canvas.itemconfigure(self._body_win, width=e.width)
+        except Exception:
+            pass
+        self._update_scroll()
+
+    def _on_body_cfg(self, e):
+        self._update_scroll()
+
+    def _update_scroll(self):
+        try:
+            cw = max(1, self.canvas.winfo_width())
+            ch = max(1, self.canvas.winfo_height())
+            bw = max(1, self.body.winfo_reqwidth())
+            bh = max(1, self.body.winfo_reqheight())
+            self.canvas.configure(scrollregion=(0, 0, bw, bh))
+            if bh <= ch + 2:
+                self.canvas.yview_moveto(0.0)
+            if bw <= cw + 2:
+                self.canvas.xview_moveto(0.0)
+        except Exception:
+            pass
+
+    def _on_wheel(self, e):
+        """Rolagem SEM barra: wheel rola o conteúdo; só age se houver
+        overflow. Shift+wheel rola na horizontal. Eventos de popups de
+        grafico não chegam aqui (outro toplevel nos bindtags)."""
+        try:
+            if e.widget.winfo_toplevel() is not self.root:
+                return
+            cv = self.canvas
+            bh = max(1, self.body.winfo_reqheight())
+            bw = max(1, self.body.winfo_reqwidth())
+            up = (getattr(e, "num", None) == 4
+                  or getattr(e, "delta", 0) > 0)
+            horiz = bool(getattr(e, "state", 0) & 0x00000001)
+            if horiz:
+                if bw <= cv.winfo_width() + 2:
+                    return
+                cv.xview_scroll(-1 if up else 1, "units")
+            else:
+                if bh <= cv.winfo_height() + 2:
+                    return
+                cv.yview_scroll(-1 if up else 1, "units")
+        except Exception:
+            pass
+
+    def _resize_start(self, e, mode="se"):
+        self._resizing = True
+        self._cancel_click()
+        try:
+            self.root.update_idletasks()
+            w = self.root.winfo_width()
+            h = self.root.winfo_height()
+            if w <= 2 or h <= 2:
+                w = self.root.winfo_reqwidth()
+                h = self.root.winfo_reqheight()
+            self._resize = (e.x_root, e.y_root, w, h,
+                            self.root.winfo_x(), self.root.winfo_y(),
+                            mode)
+        except Exception:
+            self._resize = None
+
+    def _resize_motion(self, e):
+        if not (self._resizing and self._resize):
+            return
+        try:
+            x0, y0, w0, h0, wx0, wy0, mode = self._resize
+            dx = e.x_root - x0
+            dy = e.y_root - y0
+            w, h, nx, ny = w0, h0, wx0, wy0
+            # resize direcional: letras do modo indicam que bordas se movem
+            if "e" in mode:
+                w = w0 + dx
+            if "w" in mode:
+                w = w0 - dx
+            if "s" in mode:
+                h = h0 + dy
+            if "n" in mode:
+                h = h0 - dy
+            w = max(MIN_W, min(w, self.root.winfo_screenwidth()))
+            h = max(MIN_H, min(h, self.root.winfo_screenheight()))
+            # bordas oeste/norte ancoram o lado oposto (a janela cresce
+            # para o lado arrastado, posicao acompanha o clamp)
+            if "w" in mode:
+                nx = wx0 + (w0 - w)
+            if "n" in mode:
+                ny = wy0 + (h0 - h)
+            self._win_size = (w, h)
+            self.root.geometry(f"{w}x{h}+{nx}+{ny}")
+            self._user_moved = True
+        except Exception:
+            pass
+
+    def _resize_end(self, e):
+        if not self._resizing:
+            return
+        self._resizing = False
+        self._resize = None
+        # persiste: o poller também salva o cache, mas garante agora
+        try:
+            self.last["win"] = {"w": self._win_size[0],
+                                "h": self._win_size[1]}
+            save_cache(self.last)
+        except Exception:
+            pass
 
     def _toggle_top(self):
         on = self.var_top.get()
@@ -3503,6 +3731,8 @@ class GoldWidget:
             self._click_job = None
 
     def _on_press(self, e):
+        if self._resizing:                      # v7.1: resize em andamento
+            return
         self._cancel_click()
         self._drag_off = (e.x_root - self.root.winfo_x(),
                           e.y_root - self.root.winfo_y())
@@ -3511,6 +3741,8 @@ class GoldWidget:
         self._dragged = False
 
     def _on_drag(self, e):
+        if self._resizing:                      # v7.1: resize em andamento
+            return
         self._user_moved = True
         try:
             dx = e.x_root - self._press_xy[0]
@@ -3526,6 +3758,8 @@ class GoldWidget:
 
     def _on_release(self, e):
         try:
+            if self._resizing:                  # v7.1: resize em andamento
+                return
             if self._dragged:
                 return
             if time.time() - self._press_t > 0.6:
@@ -4964,9 +5198,9 @@ def main():
         print("Sem display gráfico (DISPLAY não definido).", file=sys.stderr)
         return 1
 
-    log("iniciando widget (v7.0: + URALS T+1 — degraus TradingEconomics"
-        " urals-oil e minfin.com.ua à frente do OilPrice.com (T+2);"
-        " delay exibido calculado da data real do dado)")
+    log("iniciando widget (v7.1: janela redimensionável — alças invisíveis"
+        " nas 4 bordas/4 cantos + rolagem oculta (wheel, sem scrollbar) +"
+        " tamanho persistente no cache)")
     root = tk.Tk()
     GoldWidget(root)
     root.mainloop()

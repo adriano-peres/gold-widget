@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.x-3776AB?logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/plataforma-Linux%20%C2%B7%20X11-FCC624?logo=linux&logoColor=black)
 ![Dependências](https://img.shields.io/badge/depend%C3%AAncias-somente%20stdlib-00A86B)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-v7.0-c9a227)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-v7.1-c9a227)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20pessoal-lightgrey)
 
 Widget de desktop em **Python puro** (tkinter) que mostra o **preço do ouro spot em tempo real** direto na sua área de trabalho — em **USD/onça** e **R$/grama** — além da **média de varejo dos combustíveis nos EUA** (gasolina e diesel de bomba, US$/gal).
@@ -64,6 +64,7 @@ Diesel (on-highway)      US$ 3.582/g        ▼ 0.44%
 - Derivação conservadora: só calcula o BRL a partir de câmbio com **até 15 min** de idade
 - Modo `--dump`: busca tudo pela linha de comando, sem interface gráfica
 - Arrastável, com menu de contexto, encostar no canto e opção "manter no topo"
+- **Redimensionável** (v7.1): arraste a borda/canto invisível; rolagem oculta (roda do mouse, sem barra) quando o conteúdo não couber; tamanho persistente entre reinícios
 
 ## Fontes de dados e cadeia de fallback
 
@@ -142,7 +143,9 @@ O polling roda em thread separada a cada **90 s** (abaixo do teto anônimo de ~1
 | Ação | Resultado |
 |---|---|
 | **Arrastar** com o botão esquerdo | move o widget para onde quiser |
-| **Duplo clique** | encosta no canto superior direito |
+| **Arrastar** uma borda ou canto (área invisível de ~6–14 px, cursor muda ao passar) | redimensiona — as bordas esquerda/superior ancoram o lado oposto; mínimo 200×150 |
+| **Roda do mouse** sobre o widget | rola o conteúdo quando não couber na janela (sem barra de rolagem; Shift+roda rola na horizontal) |
+| **Duplo clique** | encosta no canto superior direito (mantém o tamanho escolhido) |
 | **Clique simples** num valor | abre o popup com o gráfico do ativo (período 7D–1A ajustável) |
 | **Botão direito** | abre o menu |
 | Menu → *Atualizar agora* | força um refresh imediato (não empilha com o poller em curso) |
@@ -209,6 +212,7 @@ A solução: o widget cria-se como tipo `desktop` e depois envia ao WM um *clien
 | **v5.6** | **Fusão das forks**: o repo passa a ter tudo — spot, China, COMEX GC=F e combustível com fallbacks |
 | **v6.5** | **Remoção** do futuro COMEX (GC=F) e de toda a seção China (SGE/SHFE, Base China Gold, barras de banco) + buscas correspondentes |
 | **v7.0** | **Urals com delay halvo (T+1)**: TradingEconomics `urals-oil` (scrape `market_last` + data real do resumo) e minfin.com.ua entram como degraus 1-2, à frente do OilPrice.com (T+2); delay exibido calculado da data real do dado |
+| **v7.1** | **Janela redimensionável** com alças invisíveis nas 4 bordas/4 cantos (resize direcional, mínimo 200×150), **rolagem oculta** (roda do mouse, sem barra na UI; texto não escala) e **tamanho persistente** no cache |
 
 ## Licença
 
