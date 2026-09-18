@@ -194,15 +194,128 @@ v5.8:
        throttle 1,5s entre calls Yahoo, tentativa automatica query2 em 429,
        log com lock thread-safe, jitter no poller, GC expira em 4d como
        HO/Brent, HO/Brent ganham Yahoo-q2 + mesmo backoff por fonte.
-v6.5 (2026-09-17, a pedido do usuário):
-    * REMOVIDO — seção "COMEX · FUTURO (GC=F)" e TODA a seção CHINA
-      (BOLSAS SGE/SHFE, REFERÊNCIA Base China Gold, BARRAS DE BANCO).
-      Buscas desativadas: Sina, Eastmoney, jijinhao, xxapi e cadeia Yahoo-GC.
-      Mantidos: spot USD/BRL, combustível EUA, CDS, HO=F, Brent, Urals.
-      Spot agora usa goldprice.dev -> goldprice.org (sem fallback Sina).
+ v6.5 (2026-09-17, a pedido do usuário):
+     * REMOVIDO — seção "COMEX · FUTURO (GC=F)" e TODA a seção CHINA
+       (BOLSAS SGE/SHFE, REFERÊNCIA Base China Gold, BARRAS DE BANCO).
+       Buscas desativadas: Sina, Eastmoney, jijinhao, xxapi e cadeia Yahoo-GC.
+       Mantidos: spot USD/BRL, combustível EUA, CDS, HO=F, Brent, Urals.
+       Spot agora usa goldprice.dev -> goldprice.org (sem fallback Sina).
+ v6.6 (ESTA VERSAO, a pedido do usuário):
+     * NOVO — seção "FERTILIZANTE · UREIA", 2 linhas em US$/t:
+         - "Uréia (spot intl.)"  : diário. O TE espelha o granular FOB
+           GOLFO EUA (conferido: TE 460.00 == futuro CBOT UFV1! 460.0 no
+           mesmo dia; por isso o rótulo não fala "Oriente Médio").
+         - "Uréia CFR Brasil"    : futuro CBOT/CME "Urea (Granular) CFR
+           Brazil" (UFB=F) — preço da ureia chegando no porto brasileiro.
+     * Cadeias de fallback (cada fonte com cooldown próprio, igual v6.4):
+         - spot : TradingEconomics (scrape market_last, mesmo scraper do
+                  HO=F) -> TradingView scanner (POST JSON público, contínuo
+                  CBOT:UFV1! — a MESMA base do TE) -> World Bank Pink Sheet
+                  (xlsx mensal parseado com stdlib: zip + XML; série "Urea"
+                  f.o.b. Oriente Médio, US$/mt — BASE DIFERENTE, por isso o
+                  rodapé mostra "mensal") -> cache 14d.
+         - CFR  : Yahoo UFB=F (chart API, q1 -> q2 em 429) -> TradingView
+                  (CBOT:UFB1!) -> cache 14d.
+         - Investigações que MORRERAM no teste (não viram degrau): CEPEA
+           (sem indicador de ureia), FMI/PCPS (não tem ureia), FRED (só
+           índice PPI), Investing/Barchart/CME (403/challenge), DBnomics
+           (sem PCPS). Pink Sheet: a URL do xlsx muda de "safra" p/ safra
+           -> descobre na página oficial (fallback: URL conhecida).
+     * Refetch no máx. 1/h (dado diário; martelada não adianta); cooldown
+       por fonte + por seção; cache vence em 14 dias.
+      * Grafico no clique: ureia spot usa o Pink Sheet (mensal: 1M/3M/6M/1A;
+        janela < ~2 meses cai no log local); CFR Brasil so tem o log local
+        (1M). Menu "Ver grafico" ganhou as duas entradas. Falha isolada.
+ v6.7 (ESTA VERSAO, a pedido do usuário):
+      * NOVO — seção "ENXOFRE · SPOT CN": enxofre elemental (granular,
+        spot da China — NÃO existe público em US$/t: Pink Sheet SEM série
+        sulfur (conferido no xlsx), IMF/FRED/Yahoo/OilPrice/Investing
+        sem, futuro não tem em bolsa nenhuma). As DUAS fontes vivas
+        publicam CNY/t e espelham o MESMO mercado (conferido: SunSirs
+        09-16 = 7704.00 == fech. anterior do TE):
+          - TradingEconomics /commodity/sulfur (scrape market_last) [1º]
+          - SunSirs EN prodetail-427 (tabela diária com 6 dias; o site
+            tem anti-bot JS que seta o cookie HW_CHECK=<hash> e
+            recarrega — replicado com urllib em 2 GETs)      [2º]
+          - cache local, "(cache)" após 2h, expira em 14 dias.
+      * Exibição em US$/t: price CNY ÷ USDCNY (USDCNY = USDBRL ÷ CNYBRL,
+        3 fontes via fetch_fx). Câmbio velho (>FX_MAX_AGE) = mostra o
+        CNY/t cru (rodapé avisa). Log do gráfico SÓ em US$/t (escala
+        consistente; CNY cru não entra no histórico).
+      * Gráfico no clique: 7D = tabela do SunSirs (6 pontos reais,
+        convertidos com o USDCNY de agora, anotado no rodapé); 1M+
+        = log local. Falha isolada das demais seções.
+ v6.8 (ESTA VERSAO, a pedido do usuário):
+      * NOVO — seção "CHINA · CRUDE SC (XANGAI)": futuro de crude da INE
+        (Shanghai International Energy Exchange, o "Shanghai oil"), CNY/bbl
+        exibido em US$/bbl. Investigação ao vivo (2026-09-17):
+          - Yahoo NÃO tem SC=F (404 validado contra BZ=F 200 na mesma rota)
+          - TradingView scanner não cobre futuros da INE (0 resultados)
+          - SunSirs "Crude oil" (prodetail-1127) é o fechamento do BRENT em
+            US$/bbl (105,83 == BZ=F), base errada p/ o SC -> fora
+        Cadeia (cooldown por fonte, padrão v6.4):
+          - Sina nf_SC0 [principal]: realtime-ish (sessão noturna 21:00-
+            02:30 BJT); f[8] last, f[27] 昨结算 (settlement). PEGADINHA:
+            f[10] (805,0) é o LIMITE-UP — nunca usar como fechamento
+          - Eastmoney futsseapi /static/142_scm_qt (p vs j settlement)
+          - Eastmoney push2delay 142.scm (f43/10, tick 0.1 CNY; o f170
+            calcula vs limite-up -> NÃO serve como pct; degrau sem pct)
+          - cache local, "(cache)" após FUT_STALE (10 min), expira 4 dias
+        Variação do dia = convenção chinesa (vs settlement anterior, hoje
+        -0,94%); Sina e futsseapi batem entre si. Conversão US$/bbl SÓ com
+        USDCNY fresco (padrão do enxofre); sem câmbio: CNY/bbl cru.
+        Gráfico no clique: kline diário 142.scm convertido ÷USDCNY de hoje,
+        fallback no log local. Falha isolada das demais seções.
+  v6.9 (ESTA VERSAO, a pedido do usuário):
+      * NOVO — seção "EMIRADOS · CRUDE MURBAN": preço do Murban (blend de
+        exportação de Abu Dhabi, precificado pela ADNOC; benchmark asiático
+        oficial desde a ICE Futures Abu Dhabi). US$/bbl com variação do dia.
+        Investigação ao vivo (2026-09-17): Yahoo NÃO tem MU=F/MOF=F/MURBAN
+        (404/Not Found validado), TV scanner sem o ativo (0 resultados,
+        testados ICEEUR:MURBAN/MOF1!/ADNOC:MURBAN1!), FXEmpire 404 e
+        TradingEconomics /commodity/murban SEM cotação (página sem
+        market_last). O Murban vive no OilPrice.com, mesma infra do Urals:
+          - oil-price-charts: linha data-name 'Murban-Crude' (blend_id
+            4464; GET puro; avaliação c/ delay de minutos — conferido:
+            16-Minute Delay)                          [principal]
+          - /freewidgets/json_get_oilprices (blend_id=4464; CSRF +
+            X-Requested-With, como no Urals/Brent)    [fallback 1]
+          - cache local, etiqueta "(cache)", expiração em 7 dias
+            (padrão Urals: avaliação com atraso).
+      * Refetch no máx. 1/h (dado de avaliação; martelada não adianta).
+        Cooldown por fonte + por seção (padrão v6.4). A tabela do
+        OilPrice.com agora serve Urals + Brent + Murban (cache 2 min já
+        existente evita request duplicado entre as três seções).
+      * Gráfico no clique (7D/1M/3M/6M/1A): séries do freewidgets (mesmos
+        períodos do Urals: 4=1M, 6=3M, 5=1A), com fallback no log local.
+        Falha isolada das demais seções.
+  v7.0 (ESTA VERSAO, a pedido do usuário):
+      * URALS com delay HALVO: investigação ao vivo (17/09/2026) achou a
+        MESMA avaliação spot republicada em T+1 (o OilPrice.com repassa
+        T+2 — conferido no mesmo instante: OilPrice 111.77/stamp 15-09
+        vs TE e minfin 121.61/16-09). Cadeia nova, cada fonte com
+        cooldown próprio (padrão v6.4):
+          - TradingEconomics /commodity/urals-oil (scrape market_last,
+            o MESMO scraper do HO=F/ureia/sulfur; data real do dado
+            parseada do resumo '... USD/Bbl on September 16, 2026')
+                                                        [1º, T+1]
+          - minfin.com.ua /markets/oil/urals/ (tabela diária dd.mm.yyyy,
+            GET puro sem chave, decimal com vírgula)    [2º, T+1]
+          - OilPrice.com tabela (GET, como antes)        [3º, T+2]
+          - OilPrice.com freewidgets (CSRF + XHR)        [4º, T+2]
+        O delay do rodapé agora vem da DATA REAL do dado (diff em dias),
+        não de texto fixo da fonte.
+      * Investigação que MORREU (não viram degrau): Investing RU congelado
+        desde 25/02/2026; CBR /hd_base/urals/ = 404 (série diária retirada
+        do ar); SPIMEX (bolsa física/futuro FOB Primorsk, cotação de bolsa
+        com 15 min de delay, em RUB) geo-bloqueia fora da Rússia (HTTP 000
+        e transport error testados); ProFinance sem Urals; FRED/EIA/IMF/
+        Pink Sheet mensais. Tempo real verdadeiro exige terminal pago
+        (Bloomberg/Reuters/Argus/Platts).
 Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
-"""
+ """
 
+import io
 import json
 import math
 import os
@@ -214,6 +327,8 @@ import random
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime, timedelta, timezone
 
 try:
@@ -352,25 +467,43 @@ TE_GC_URL     = "https://tradingeconomics.com/commodity/gold"
 HO_REFETCH    = 5 * 60               # dado intraday; refetch no máx. 1/5min
 HO_MAX_AGE    = 4 * 86400            # cache vence (4 dias; cobre fim de semana)
 
-# -------------- CONFIG · CRUDE URALS (Rússia, v6.2) --------------------------
+# -------------- CONFIG · CRUDE URALS (Rússia, v7.0) --------------------------
 # Urals = blend de exportação da Rússia (FOB NW Europe/Primorsk). NÃO é
-# cotado em bolsa regular: Yahoo/FRED/Investing/TradingEconomics não têm
-# série de spot (testado) — o valor vem de avaliações com 1-2 dias de
-# atraso. Fontes grátis sem chave:
-#   - OilPrice.com oil-price-charts: tabela com dezenas de blends; a
-#     linha do Urals (data-name 'Urals-Brent') traz preço, Δ, Δ%,
-#     timestamp e o texto do atraso. GET puro, sem chave.
-#   - OilPrice.com /freewidgets/json_get_oilprices: POST JSON usado pelo
-#     próprio gráfico do blend (CSRF de /ajax/csrf; o POST exige header
-#     X-Requested-With, senão responde HTML). É também a fonte das
-#     séries históricas (períodos: 4=1M, 6=3M, 5=1A, 7=5A).
+# cotado em bolsa regular: Yahoo/FRED/Investing/TradingEconomics-comum não
+# têm série de spot de bolsa — o valor vem de AVALIAÇÕES (Argus/Platts,
+# Dated Brent − desconto) com atraso. Cadeia (v7.0, cada fonte com
+# cooldown próprio):
+#   1º TE /commodity/urals-oil  [T+1]: scrape market_last (mesmo scraper
+#      do HO=F/ureia/sulfur); date real parseada do resumo da página
+#   2º minfin.com.ua /markets/oil/urals/  [T+1]: tabela diária, GET puro,
+#      sem chave, decimal com vírgula (16.09.2026 = 121,61)
+#   3º OilPrice.com oil-price-charts: linha data-name 'Urals-Brent'
+#      (blend 4466; T+2 — "(2-Day Delay)" conferido ao vivo)
+#   4º OilPrice.com /freewidgets/json_get_oilprices: POST JSON do gráfico
+#      (CSRF de /ajax/csrf; exige header X-Requested-With)
 OILPRICE_CHARTS_URL = "https://oilprice.com/oil-price-charts/"
 OILPRICE_CSRF_URL   = "https://oilprice.com/ajax/csrf"
 OILPRICE_JSON_URL   = "https://oilprice.com/freewidgets/json_get_oilprices"
+TE_URALS_URL        = "https://tradingeconomics.com/commodity/urals-oil"
+MINFIN_URALS_URL    = "https://index.minfin.com.ua/markets/oil/urals/"
 URALS_BLEND_ID      = "4466"
-URALS_REFETCH       = 3600              # dado atrasado 1-2 dias: refetch 1/h
+URALS_REFETCH       = 3600              # dado atrasado T+1: refetch 1/h
 URALS_MAX_AGE       = 7 * 86400         # cache vence (7 dias sem fonte)
-OILPRICE_PAGE_TTL   = 120               # tabela serve Urals E Brent: cache 2min
+OILPRICE_PAGE_TTL   = 120               # tabela serve Urals/Brent/Murban: 2min
+
+# ------------------- CONFIG · CRUDE MURBAN (Emirados, v6.9) ------------------
+# Murban = blend de exportação de Abu Dhabi (precificado pela ADNOC;
+# benchmark oficial do Oriente Médio na ICE Futures Abu Dhabi). Como o
+# Urals, NÃO é spot de bolsa comum acessível (Yahoo sem MU=F/MOF=F/MURBAN
+# — 404 validado; TV scanner 0 resultados; FXEmpire 404; TE sem cotação):
+# a fonte viva é o OilPrice.com, mesma infra do Urals/Brent:
+#   - tabela oil-price-charts: linha data-name='Murban-Crude' (data-id
+#     4464), avaliação com delay de minutos (conferido: 16-Minute Delay)
+#   - freewidgets json_get_oilprices (blend_id 4464): quote + séries
+#     históricas (períodos 4=1M, 6=3M, 5=1A), CSRF + X-Requested-With
+MURBAN_BLEND_ID = "4464"
+MURBAN_REFETCH  = 3600                # avaliação com delay: refetch 1/h
+MURBAN_MAX_AGE  = 7 * 86400           # cache vence (7 dias; padrão Urals)
 
 # ------------------- CONFIG · BRENT (benchmark global, v6.3) -----------------
 # Brent = benchmark do petroleo (mar do Norte). Nao é spot em bolsa
@@ -390,6 +523,85 @@ FXE_BRENT_URL = "https://www.fxempire.com/commodities/brent-crude-oil"
 BRENT_BLEND_ID = "46"
 BRENT_REFETCH  = 5 * 60               # intraday: refetch no máx. 1/5min
 BRENT_MAX_AGE  = 4 * 86400            # cache vence (4 dias; cobre fim de semana)
+
+# ------------------- CONFIG · CRUDE SC (Xangai INE, v6.8) --------------------
+# Futuro de crude da INE (Shanghai International Energy Exchange) — o
+# "Shanghai oil". Cota em CNY/bbl (tick 0,1). Yahoo NÃO tem SC=F (404
+# validado) e o scanner do TV não cobre a INE, então a cadeia vive de
+# fontes CN: Sina nf_SC0 (contínuo SC0) -> Eastmoney futsseapi 142_scm_qt
+# (原油主连) -> Eastmoney push2delay 142.scm -> cache. Layout da Sina p/ o
+# SC (verificado ao vivo): f[8]=último, f[10]=LIMITE-UP (nunca usar),
+# f[27]=昨结算 (settlement — base da variação do dia, convenção chinesa).
+# Exibição US$/bbl com USDCNY fresco (mesma regra do enxofre; sem câmbio
+# fresco: CNY/bbl cru). Faixa de sanidade: kline set/26 631..838 CNY/bbl.
+EM_SC_FUTSSE_URL = ("https://futsseapi.eastmoney.com/static/"
+                    "142_scm_qt?token=58b2fa8f5c380ac3ee3494ecc1b6d8e6")
+EM_SC_SECID      = "142.scm"
+SINA_SC_CODE     = "nf_SC0"
+SINA_SC_KLINE_URL = ("https://stock2.finance.sina.com.cn/futures/api/"
+                     "jsonp.php/var%20_s=/InnerFuturesNewService"
+                     ".getDailyKLine?symbol=SC0")   # kline diário (reserva)
+SC_REFETCH       = 5 * 60            # intraday (sessão noturna): 1/5min
+SC_MAX_AGE       = 4 * 86400         # cache vence (4 dias; cobre fds)
+SC_CNY_LO        = 50.0              # sanidade do valor CNY/bbl
+SC_CNY_HI        = 2000.0            # (hist 2025-26: ~400..900)
+SC_PCT_LIMIT     = 25.0              # |pct| além do limite do preço = dado ruim
+
+# ------------------- CONFIG · UREIA (fertilizante, v6.6) ---------------------
+# Uréia = fertilizante nitrogenado. 2 linhas em US$/t:
+#   - "Uréia (spot intl.)": diário. O TE espelha o granular FOB GOLFO EUA
+#     (conferido no dia do teste: TE 460.00 == contínuo CBOT UFV1! 460.0 —
+#     por isso o rótulo NÃO fala "Oriente Médio").
+#   - "Uréia CFR Brasil"  : futuro CBOT/CME "Urea (Granular) CFR Brazil"
+#     (UFB=F) — o preço chegando no porto brasileiro.
+# Cadeias (cada fonte com cooldown próprio, padrão v6.4):
+#   spot : TE (scrape market_last, mesmo scraper do HO=F) -> TradingView
+#          scanner (POST JSON público, contínuo CBOT:UFV1!, MESMA base do
+#          TE) -> World Bank Pink Sheet (xlsx MENSAL, zip+XML stdlib; série
+#          "Urea" f.o.b. Oriente Médio US$/mt — BASE DIFERENTE, rodapé
+#          mostra "mensal") -> cache.
+#   CFR  : Yahoo UFB=F (chart API, q1 -> q2 em 429) -> TV (CBOT:UFB1!) ->
+#          cache.
+# Refetch no máx. 1/h (dado diário); cache vence em 14 dias (padrão do
+# combustível). Mortas no teste e portanto FORA da cadeia: CEPEA (sem
+# indicador), FMI/PCPS (sem ureia), FRED (só índice PPI), Investing/
+# Barchart/CME (403/challenge). A URL do xlsx do Pink Sheet muda de "safra"
+# p/ safra (hash no caminho) -> descobre na página oficial, com a URL
+# conhecida como reserva.
+TE_UREA_URL   = "https://tradingeconomics.com/commodity/urea"
+UREA_REFETCH  = 3600                  # diário: refetch no máx. 1/h
+UREA_MAX_AGE  = 14 * 86400            # cache vence (14 dias sem fonte)
+YAHOO_UREA_BR_URL    = ("https://query1.finance.yahoo.com/v8/finance/chart/UFB=F"
+                        "?interval=1d&range=5d")
+YAHOO_UREA_BR_URL_Q2 = ("https://query2.finance.yahoo.com/v8/finance/chart/UFB=F"
+                        "?interval=1d&range=5d")
+TV_SCAN_URL   = "https://scanner.tradingview.com/global/scan"
+WB_CM_PAGE    = "https://www.worldbank.org/en/research/commodity-markets"
+WB_CM_XLSX    = ("https://thedocs.worldbank.org/en/doc/"
+                 "74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/"
+                 "CMO-Historical-Data-Monthly.xlsx")   # reserva (set/2026)
+UREA_PINK_TTL = 12 * 3600             # xlsx ~600 KB, atual 1x/mês: cache 12h
+
+# ------------------- CONFIG · ENXOFRE (spot CN, v6.7) ------------------------
+# Enxofre elemental (granular, spot da China). NÃO existe público em US$/t:
+# Pink Sheet sem série sulfur (conferido no xlsx: bloco fertilizante =
+# Phosphate rock/DAP/TSP/Urea/KCl), IMF/FRED/Yahoo/OilPrice/Investing não
+# têm, futuro não existe em bolsa. As duas fontes vivas publicam CNY/t e
+# espelham o MESMO mercado (conferido: SunSirs 2026-09-16 = 7704.00 ==
+# fechamento anterior do TE; 09-17: TE 7.687,33 vs SunSirs 7.685,67):
+#   - TradingEconomics /commodity/sulfur — scrape market_last (mesmo
+#     scraper da ureia/HO); histórico: máx 11.084 / mín 470 (CNY/t)
+#   - SunSirs EN prodetail-427 — tabela diária (Sulfur|Chemical|preço|data)
+#     com os últimos 6 dias; anti-bot JS seta HW_CHECK=<hash> e recarrega:
+#     replicado com urllib em 2 GETs (hash extraído da 1ª resposta)
+# Exibição em US$/t: ÷ USDCNY (USDCNY = USDBRL ÷ CNYBRL, 3 fontes
+# fetch_fx). Sem câmbio fresco: CNY/t cru (flag 'cny').
+TE_SULFUR_URL       = "https://tradingeconomics.com/commodity/sulfur"
+SUNSIRS_SULFUR_URL  = "https://www.sunsirs.com/uk/prodetail-427.html"
+SULFUR_REFETCH      = 3600            # diário: refetch no máx. 1/h
+SULFUR_MAX_AGE      = 14 * 86400      # cache vence (14 dias sem fonte)
+SULFUR_CNY_LO       = 100.0           # sãidade do valor CNY/t (hist 470..)
+SULFUR_CNY_HI       = 20000.0         # ...11.084; teto folgado
 
 # Tradução dos nomes em chinês vindos da xxapi (fonte CJK não é necessária)
 BANK_TR = {
@@ -609,8 +821,8 @@ def _hist_cds(days):
     return pts[-days:] if len(pts) > days else pts, "Investing.com"
 
 
-def _hist_urals(days):
-    """Série histórica do Urals no endpoint JSON do OilPrice.com.
+def _hist_oilprice_blend(blend_id, days, label):
+    """Série histórica de um blend no endpoint JSON do OilPrice.com.
     Períodos do blend: 4=1M (~20 pts), 6=3M (~61), 5=1A (~251).
     Pontos vêm em epoch; normaliza p/ data UTC deduplicada."""
     days = int(days)
@@ -620,7 +832,7 @@ def _hist_urals(days):
         period = 6
     else:
         period = 5
-    pts, _lc, _u = _oilprice_json_period(URALS_BLEND_ID, period)
+    pts, _lc, _u = _oilprice_json_period(blend_id, period)
     by = {}
     for t, v in pts:
         try:
@@ -631,8 +843,66 @@ def _hist_urals(days):
             continue
     ser = sorted(by.items())
     if len(ser) < 2:
-        raise ValueError("OilPrice Urals sem serie")
-    return ser[-days:] if len(ser) > days else ser, "OilPrice.com"
+        raise ValueError(f"OilPrice {label} sem serie")
+    return ser[-days:] if len(ser) > days else ser, f"OilPrice.com"
+
+
+def _hist_urals(days):
+    return _hist_oilprice_blend(URALS_BLEND_ID, days, "Urals")
+
+
+def _hist_murban(days):
+    return _hist_oilprice_blend(MURBAN_BLEND_ID, days, "Murban")
+
+
+def _hist_sc_sina_kline():
+    """Série diária do contínuo SC0 no endpoint de kline de futuros da
+    própria Sina (infra independente do Eastmoney; desde 2018-03-26, o
+    listing do SC). JSONP 'var _s=([{d,o,h,l,c,v,...},...])' — exige
+    Referer; c>0 e dentro da faixa de sanidade."""
+    raw = _http_get(SINA_SC_KLINE_URL,
+                    {"Referer": SINA_REFERER}).decode("utf-8", "replace")
+    s, e = raw.find("["), raw.rfind("]")
+    if s < 0 or e <= s:
+        raise ValueError("Sina kline sem JSONP")
+    rows = json.loads(raw[s:e + 1])
+    pts = []
+    for r in rows:
+        try:
+            c = float(r.get("c"))
+        except (TypeError, ValueError):
+            continue
+        if not _sc_ok(c):
+            continue
+        d = str(r.get("d") or "")
+        if len(d) == 10:
+            pts.append((d, c))
+    if len(pts) < 2:
+        raise ValueError("Sina kline SC0 sem série")
+    return pts
+
+
+def _hist_sc(days):
+    """Série p/ o gráfico do SC: kline diário do contínuo (CNY/bbl) —
+    Eastmoney 142.scm -> Sina SC0 (fontes independentes) — convertida
+    ÷ USDCNY de AGORA (nota no rodapé do popup, como no enxofre). Sem
+    câmbio fresco ou com as duas séries mortas: levanta (o fetch_history
+    cai pro log local, que acumula US$/bbl desde a v6.8)."""
+    days = int(days)
+    fx = fetch_fx()
+    if not (fx.get("usdcny") and _fx_fresh(fx)):
+        raise ValueError("sem câmbio fresco p/ converter a série SC")
+    rate = float(fx["usdcny"])
+    try:
+        cny_pts, _s0 = _hist_em(EM_SC_SECID, days)
+    except Exception as e:
+        log(f"hist SC: push2his falhou ({e}); Sina kline")
+        cny_pts = _hist_sc_sina_kline()
+    pts = [(d, round(v / rate, 4))
+           for d, v in (cny_pts[-days:] if len(cny_pts) > days else cny_pts)]
+    if len(pts) < 2:
+        raise ValueError(f"SC sem série ({len(pts)} ponto(s))")
+    return pts, f"SC diário (CNY÷{rate:.4f})"
 
 
 def _hist_join(dates_vals, fx_by_date):
@@ -733,6 +1003,14 @@ HIST_META = {
                    "fmt": lambda v: f"US$ {fmt_usd(v)}",
                    "yfmt": lambda v: f"{v:,.0f}",
                    "ranges": (7, 30, 90, 180, 365)},
+    "sc_f":       {"title": "China · Crude SC (USD/bbl)",
+                   "fmt": lambda v: f"US$ {fmt_usd(v)}",
+                   "yfmt": lambda v: f"{v:,.0f}",
+                   "ranges": (7, 30, 90, 180, 365)},
+    "murban":     {"title": "Emirados · Murban (USD/bbl)",
+                   "fmt": lambda v: f"US$ {fmt_usd(v)}",
+                   "yfmt": lambda v: f"{v:,.0f}",
+                   "ranges": (7, 30, 90, 180, 365)},
     "sge_au9999": {"title": "SGE Au99.99 (R$/g)",
                    "fmt": lambda v: f"R$ {fmt_brl(v)}/g",
                    "yfmt": lambda v: fmt_brl(v).split(",")[0],
@@ -761,6 +1039,18 @@ HIST_META = {
                    "fmt": lambda v: f"{fmt_bps(v)} bps",
                    "yfmt": lambda v: f"{v:.0f}",
                    "ranges": (7, 30)},
+    "urea_me":    {"title": "Uréia · Spot intl. (US$/t)",
+                   "fmt": lambda v: f"US$ {fmt_usd(v)}/t",
+                   "yfmt": lambda v: f"{v:,.0f}",
+                   "ranges": (7, 30, 90, 180, 365)},
+    "urea_br":    {"title": "Uréia · CFR Brasil UFB=F (US$/t)",
+                   "fmt": lambda v: f"US$ {fmt_usd(v)}/t",
+                   "yfmt": lambda v: f"{v:,.0f}",
+                   "ranges": (7, 30)},
+    "sulfur":     {"title": "Enxofre · Spot CN (US$/t)",
+                   "fmt": lambda v: f"US$ {fmt_usd(v)}/t",
+                   "yfmt": lambda v: f"{v:,.0f}",
+                   "ranges": (7, 30, 90, 180, 365)},
 }
 
 
@@ -794,6 +1084,10 @@ def fetch_history(key, days=30, hist_log=None):
             pts, src = _hist_yahoo("BZ=F", days)
         elif base == "urals":
             pts, src = _hist_urals(days)
+        elif base == "sc_f":
+            pts, src = _hist_sc(days)
+        elif base == "murban":
+            pts, src = _hist_murban(days)
         elif base in ("sge_au9999", "sge_autd"):
             inst = "Au99.99" if base == "sge_au9999" else "Au(T+D)"
             sec = "118.AU9999" if base == "sge_au9999" else "118.AUTD"
@@ -856,6 +1150,12 @@ def fetch_history(key, days=30, hist_log=None):
             pts, src = _hist_fred(list(DIESEL_FRED_IDS), days)
         elif base == "cds_5y":
             pts, src = _hist_cds(days)
+        elif base == "urea_me":
+            pts, src = _hist_urea_me(days)
+        elif base == "urea_br":
+            raise ValueError("UFB=F sem série pública (histórico no log local)")
+        elif base == "sulfur":
+            pts, src = _hist_sulfur(days)
         else:
             raise ValueError(f"ativo desconhecido: {key}")
     except Exception as e:
@@ -1386,7 +1686,10 @@ def fetch_ho_te():
 def _fetch_te_commodity(url, hi):
     """Scrape do SSR do Trading Economics — <span id="market_last"> com o
     preço (aceita separador de milhar, ex.: '4,374.01'), market_daily_chg
-    com o Δ absoluto e market_daily_Pchg com o Δ% do dia."""
+    com o Δ absoluto e market_daily_Pchg com o Δ% do dia. Quando a página
+    traz o resumo ('... rose to 121.61 USD/Bbl on September 16, 2026'),
+    a data real do dado vai no campo 'day' (strptime %B %d, %Y — locale
+    C = meses em inglês)."""
     html = _http_get(url, {"User-Agent": BROWSER_UA,
                            "Accept-Language": "en-US,en;q=0.9"},
                      timeout=30).decode("utf-8", "replace")
@@ -1402,10 +1705,20 @@ def _fetch_te_commodity(url, hi):
     mp = re.search(r'id="market_daily_Pchg"[^>]*>'
                    r'\s*(-?[0-9]+(?:\.[0-9]+)?)\s*%', html)
     chg = _to_float(mc.group(1).replace(",", "")) if mc else None
+    day = None
+    mday = re.search(r"rose to [0-9.,]+ [^<>]{0,80}?on "
+                     r"([A-Z][a-z]+ \d{1,2}, \d{4})", html)
+    if mday:
+        try:
+            day = (datetime.strptime(mday.group(1), "%B %d, %Y")
+                   .date().isoformat())
+        except ValueError:
+            pass
     return {"price": price,
             "pct": _to_float(mp.group(1)) if mp else None,
             "day_chg": chg,
             "prev_close": (round(price - chg, 4) if chg else None),
+            "day": day,
             "month": "", "src": "TradingEconomics", "ts": time.time()}
 
 def fetch_gc_te():
@@ -1437,7 +1750,7 @@ def fetch_ho_future():
             _src_cooldown(name, iv, str(e))
     raise RuntimeError("diesel NYMEX sem fonte viva (" + "; ".join(errs) + ")")
 
-# ------------------- FETCH · CRUDE URALS (Rússia, v6.2) ----------------------
+# ------------------- FETCH · CRUDE URALS (Rússia, v7.0) ----------------------
 def _urals_delay(txt):
     """'2-day Delay' -> '2d' · '(11-Minute Delay)'/'11 min delay' -> '11m';
     outro formato, texto baixo."""
@@ -1490,8 +1803,11 @@ def _oilprice_row(name_re, lo=1.0, hi=500.0):
         pct = (price / prev - 1.0) * 100.0
     day = (datetime.fromtimestamp(int(mstamp.group(1)), timezone.utc)
            .strftime("%Y-%m-%d") if mstamp else None)
+    delay = _urals_delay(mdelay.group(1) if mdelay else "")
+    if delay.endswith("d"):      # texto em dias: data real (stamp) é a verdade
+        delay = _day_delay(day) or delay
     return {"price": price, "pct": pct, "day_chg": chg, "prev_close": prev,
-            "delay": _urals_delay(mdelay.group(1) if mdelay else ""),
+            "delay": delay,
             "day": day, "src": "OilPrice.com", "ts": time.time()}
 
 def fetch_urals_table():
@@ -1539,26 +1855,115 @@ def _oilprice_json_quote(blend_id):
         pts[-2][1] if len(pts) >= 2 else None)
     pct = (price / prev - 1.0) * 100.0 if prev and prev > 0 else None
     day = datetime.fromtimestamp(pts[-1][0], timezone.utc).strftime("%Y-%m-%d")
+    delay = _urals_delay(update)
+    if delay.endswith("d"):      # texto em dias: data real do ponto é a verdade
+        delay = _day_delay(day) or delay
     return {"price": price, "pct": pct,
             "day_chg": (round(price - prev, 2) if prev else None),
-            "prev_close": prev, "delay": _urals_delay(update), "day": day}
+            "prev_close": prev, "delay": delay, "day": day}
 
 def fetch_urals_json():
     """Fallback do Urals: quote JSON do freewidgets (blend 4466)."""
     return {**_oilprice_json_quote(URALS_BLEND_ID),
             "src": "OilPrice.com (freewidgets)", "ts": time.time()}
 
+def _day_delay(day):
+    """Data ISO do dado ('2026-09-16') -> delay '1d' (diff p/ hoje UTC).
+    O atraso vem da data real da avaliação, não de texto fixo da fonte."""
+    if not day:
+        return None
+    try:
+        dd = datetime.strptime(day, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    n = (datetime.now(timezone.utc).date() - dd).days
+    return f"{n}d" if n >= 0 else None
+
+def fetch_urals_te():
+    """Degrau 1 do Urals (v7.0): spot OTC/CFD espelhado no TradingEconomics
+    (scrape market_last, mesmo scraper do HO=F/ureia/sulfur). É a MESMA
+    avaliação que o OilPrice repassa com 2 dias; o TE publica T+1
+    (conferido ao vivo 17/09/2026: TE 121.61 de 16/09 vs OilPrice 111.77
+    de 15/09 no mesmo instante)."""
+    d = _fetch_te_commodity(TE_URALS_URL, 500)
+    return {**d, "delay": _day_delay(d.get("day"))}
+
+def fetch_urals_minfin():
+    """Degrau 2 do Urals (v7.0): tabela diária do minfin.com.ua (espelho
+    da mesma avaliação; GET puro sem chave, decimal com vírgula). A
+    linha 'atual' vem logo após 'составляют:' — 1ª célula = data
+    dd.mm.yyyy, depois <big>121,61</big>&nbsp;USD/bbl, Δ$ e Δ%."""
+    html = _http_get(MINFIN_URALS_URL, {"User-Agent": BROWSER_UA},
+                     timeout=30).decode("utf-8", "replace")
+    m = re.search(r"составляют.*?<tr><td>(\d{2})\.(\d{2})\.(\d{4}).*?</td>\s*"
+                  r"<td><big>([0-9.,]+)</big>&nbsp;USD/bbl</td>\s*"
+                  r"<td[^>]*><small class='d-[a-z]+'>([-+]?[0-9.,]+)</small>"
+                  r"</td>\s*<td[^>]*><small class='d-[a-z]+'>([-+]?[0-9.]+)%"
+                  r"</small></td>", html, re.S)
+    if not m:
+        raise ValueError("minfin sem linha atual do Urals")
+    price = _to_float(m.group(4).replace(",", "."))
+    chg = _to_float(m.group(5).replace(",", "."))
+    pct = _to_float(m.group(6))
+    if not price or price < 1 or price > 500:
+        raise ValueError("minfin com preço inválido")
+    day = (datetime.strptime(f"{m.group(1)}.{m.group(2)}.{m.group(3)}",
+                             "%d.%m.%Y").date().isoformat())
+    prev = round(price - chg, 2) if chg else None
+    if pct is None and prev and prev > 0:
+        pct = (price / prev - 1.0) * 100.0
+    return {"price": price, "pct": pct, "day_chg": chg, "prev_close": prev,
+            "day": day, "delay": _day_delay(day),
+            "src": "minfin.com.ua", "ts": time.time()}
+
 def fetch_urals():
-    """Crude Urals (blend de exportação russo), US$/barril. Cadeia (v6.2):
-    OilPrice.com tabela (GET) -> OilPrice.com freewidgets (POST JSON com
-    CSRF). Avaliação com 1-2 dias de atraso; falha isolada das demais."""
+    """Crude Urals (blend de exportação russo), US$/barril. Cadeia (v7.0):
+    TradingEconomics urals-oil (T+1) -> minfin.com.ua (T+1) -> OilPrice.com
+    tabela (T+2) -> OilPrice.com freewidgets (T+2). Cada fonte com
+    cooldown próprio: fallback que salva NÃO anistia a primária morta.
+    Avaliação spot com atraso; falha isolada das demais seções."""
     errs = []
-    for fetcher in (fetch_urals_table, fetch_urals_json):
+    for name, fn, iv in (("TE-Urals", fetch_urals_te, URALS_REFETCH),
+                         ("minfin-Urals", fetch_urals_minfin, URALS_REFETCH),
+                         ("OilPrice-table", fetch_urals_table, URALS_REFETCH),
+                         ("OilPrice-json", fetch_urals_json, URALS_REFETCH)):
+        if not _src_due(name):
+            errs.append(f"{name}: em cooldown")
+            continue
+        try:
+            r = fn()
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            _src_cooldown(name, iv, str(e))
+            continue
+        _src_clear(name)
+        return r
+    raise RuntimeError("crude Urals sem fonte (" + "; ".join(errs) + ")")
+
+# --------------------- FETCH · CRUDE MURBAN (v6.9) ---------------------------
+def fetch_murban_table():
+    """Preço do Murban na tabela principal do OilPrice.com — linha
+    data-name='Murban-Crude' (blend_id 4464; avaliação ADNOC com delay de
+    minutos; conferido ao vivo: 118.80, Δ -5.01, 16-Minute Delay)."""
+    return _oilprice_row("Murban")
+
+def fetch_murban_json():
+    """Fallback do Murban: quote JSON do freewidgets (blend 4464) — a
+    mesma mecânica (CSRF + X-Requested-With) do fallback do Urals/Brent."""
+    return {**_oilprice_json_quote(MURBAN_BLEND_ID),
+            "src": "OilPrice.com (freewidgets)", "ts": time.time()}
+
+def fetch_murban():
+    """Crude Murban (Abu Dhabi/ADNOC), US$/barril. Cadeia (v6.9):
+    OilPrice.com tabela (GET) -> OilPrice.com freewidgets (POST JSON com
+    CSRF). Avaliação com delay de minutos; falha isolada das demais."""
+    errs = []
+    for fetcher in (fetch_murban_table, fetch_murban_json):
         try:
             return fetcher()
         except Exception as e:
             errs.append(f"{fetcher.__name__}: {e}")
-    raise RuntimeError("crude Urals sem fonte (" + "; ".join(errs) + ")")
+    raise RuntimeError("crude Murban sem fonte (" + "; ".join(errs) + ")")
 
 # ----------------------- FETCH · BRENT (benchmark, v6.3) ---------------------
 def fetch_brent_yahoo():
@@ -1629,6 +2034,479 @@ def fetch_brent():
             errs.append(f"{name}: {e}")
             _src_cooldown(name, iv, str(e))
     raise RuntimeError("brent sem fonte viva (" + "; ".join(errs) + ")")
+
+# -------------------- FETCH · CRUDE SC (Xangai INE, v6.8) --------------------
+# Fontes testadas ao vivo (2026-09-17): Yahoo sem SC=F, TV sem futuros da
+# INE e SunSirs "Crude oil" = fechamento do Brent (base errada). Cadeia
+# inteira em CNY/bbl; a conversão US$/bbl acontece no fetch_sc com o câmbio
+# do ciclo (regra do enxofre: nada de USDCNY velho).
+def _sc_ok(v):
+    return bool(v and SC_CNY_LO < float(v) < SC_CNY_HI)
+
+def fetch_sc_sina():
+    """Contínuo SC0 da INE pela Sina (nf_SC0, mesmo pipeline do nf_AU0).
+    f[8]=último, f[10]=limite-up (PEGADINHA — nunca prev), f[27]=昨结算
+    (settlement anterior). pct vs settlement = convenção chinesa; sem
+    settlement parseável o registro volta sem pct (nunca pct errado)."""
+    txt = _http_get(SINA_URL_FMT.format(codes=SINA_SC_CODE),
+                    {"Referer": SINA_REFERER}).decode("gbk", "replace")
+    m = re.search(r'hq_str_' + SINA_SC_CODE + r'="([^"]*)"', txt)
+    if not m:
+        raise ValueError("resposta Sina nf_SC0 sem payload")
+    f = m.group(1).split(",")
+    last = _to_float(f[8] if len(f) > 8 else None)
+    if not _sc_ok(last):
+        raise ValueError("Sina nf_SC0 sem preço válido")
+    prev = _to_float(f[27] if len(f) > 27 else None)
+    pct = None
+    if _sc_ok(prev) and abs(last / prev - 1.0) * 100.0 <= SC_PCT_LIMIT:
+        pct = (last / prev - 1.0) * 100.0
+    return {"price": last, "pct": pct,
+            "prev_close": (prev if _sc_ok(prev) else None),
+            "settle_ref": (_to_float(f[27]) if len(f) > 27 else None),
+            "src": "Sina nf_SC0", "ts": time.time()}
+
+def fetch_sc_futsse():
+    """原油主连 (scm) na API interna do Eastmoney (futsseapi). p=último,
+    j=昨结算 (settlement) — mesma convenção da Sina (valores batem)."""
+    d = _get_json(EM_SC_FUTSSE_URL).get("qt") or {}
+    last, prev = _to_float(d.get("p")), _to_float(d.get("j"))
+    if not _sc_ok(last):
+        raise ValueError("futsseapi scm sem preço válido")
+    pct = None
+    if _sc_ok(prev) and abs(last / prev - 1.0) * 100.0 <= SC_PCT_LIMIT:
+        pct = (last / prev - 1.0) * 100.0
+    return {"price": last, "pct": pct, "prev_close": (prev if _sc_ok(prev) else None),
+            "name": d.get("name") or "", "src": "Eastmoney (futsseapi)",
+            "ts": time.time()}
+
+def fetch_sc_push2():
+    """Último degrau Eastmoney: push2delay 142.scm (f43 x10, tick 0,1 CNY).
+    O f170 da INE calcula vs LIMITE-UP (conferido: -5,79% contra 805,0) ->
+    NÃO vira pct. Degrau de preço puro: pct sempre None."""
+    d = _get_json(EASTMONEY_FMT.format(secid=EM_SC_SECID))
+    data = d.get("data") or {}
+    f43 = _to_float(data.get("f43"))
+    if f43 is None:
+        raise ValueError("push2delay scm sem f43")
+    price = f43 / 10.0
+    if not _sc_ok(price):
+        raise ValueError("push2delay scm com preço inválido")
+    return {"price": price, "pct": None, "prev_close": None,
+            "src": "Eastmoney (push2delay)", "ts": time.time()}
+
+def _sc_usd(price_cny, fx):
+    """CNY/bbl -> US$/bbl com o câmbio do ciclo. Exige câmbio PRESENTE e
+    com até FX_MAX_AGE (mesma regra da derivação do BRL/enxofre). Sem
+    câmbio fresco devolve (None, None) — a UI mostra o CNY/bbl cru."""
+    if not (fx and fx.get("usdcny") and _fx_fresh(fx)):
+        return None, None
+    rate = float(fx["usdcny"])
+    if rate <= 0:
+        return None, None
+    usd = float(price_cny) / rate
+    return (usd if SC_CNY_LO / rate < usd < SC_CNY_HI / rate else None), rate
+
+def fetch_sc(fx):
+    """Crude SC (Xangai INE), exibição US$/bbl. Cadeia (v6.8): Sina ->
+    Eastmoney futsseapi -> Eastmoney push2delay -> cache (camada de cima
+    mantém). Cada fonte com cooldown próprio; o primeiro degrau vivo
+    converte com o câmbio do ciclo (fx) e preserva o CNY original
+    ('cny_price', 'usdcny_used'). Sem câmbio fresco o registro volta em
+    CNY cru (flag 'cny') — nunca com taxa velha."""
+    errs = []
+    for name, fn, iv in (("Sina-SC", fetch_sc_sina, SC_REFETCH),
+                         ("Futsse-SC", fetch_sc_futsse, SC_REFETCH),
+                         ("EM-Push-SC", fetch_sc_push2, SC_REFETCH)):
+        if not _src_due(name):
+            errs.append(f"{name}: em cooldown")
+            continue
+        try:
+            r = fn()
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            _src_cooldown(name, iv, str(e))
+            continue
+        p_cny = r.get("price")
+        if not _sc_ok(p_cny):
+            errs.append(f"{name}: valor CNY fora de faixa ({p_cny})")
+            _src_cooldown(name, iv, "valor fora de faixa")
+            continue
+        _src_clear(name)
+        usd, rate = _sc_usd(p_cny, fx)
+        if usd is None:
+            r["cny"] = True                  # câmbio velho/ausente: cru
+        else:
+            r["cny_price"] = p_cny
+            r["price"] = round(usd, 4)
+            r["usdcny_used"] = rate
+        return r
+    raise RuntimeError("crude SC sem fonte viva (" + "; ".join(errs) + ")")
+
+# ---------------------- FETCH · UREIA (fertilizante, v6.6) -------------------
+def fetch_urea_te():
+    """Spot diário da ureia no Trading Economics (scrape market_last — o
+    mesmo scraper do HO=F/Brent-TE). O TE espelha o granular FOB Golfo
+    EUA (conferido: 460.00 == contínuo CBOT UFV1! 460.0 no mesmo dia)."""
+    return {**_fetch_te_commodity(TE_UREA_URL, 2000), "ts": time.time()}
+
+def _tv_quote(ticker):
+    """Quote de um símbolo no scanner PÚBLICO do TradingView — POST JSON
+    em /global/scan, sem chave (funciona até com o UA default do widget;
+    testado com e sem Origin). Resposta: {"data":[{"s":..., "d":[...]}]}
+    em que "d" segue a ORDEM das colunas pedidas (close, change,
+    prev_close_price); valor que o TV não tem vem null."""
+    body = json.dumps({"symbols": {"tickers": [ticker],
+                                   "query": {"types": []}},
+                       "columns": ["close", "change", "prev_close_price"]}
+                      ).encode("utf-8")
+    req = urllib.request.Request(
+        TV_SCAN_URL, data=body,
+        headers={"User-Agent": BROWSER_UA, "Accept": "application/json",
+                 "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=NET_TIMEOUT + 7) as r:
+        d = json.loads(r.read().decode("utf-8"))
+    rows = d.get("data") or []
+    if not rows or not isinstance((rows[0] or {}).get("d"), list):
+        raise ValueError(f"TV {ticker} sem linha")
+    arr = rows[0]["d"]
+    price = _to_float(arr[0]) if len(arr) >= 1 else None
+    if not price or price < 10 or price > 2000:      # ureia: 100-1100 hist.
+        raise ValueError(f"TV {ticker} sem preço válido")
+    chg = _to_float(arr[1]) if len(arr) >= 2 else None
+    prev = _to_float(arr[2]) if len(arr) >= 3 else None
+    if prev is None and chg:
+        prev = round(price - chg, 4)
+    pct = (price / prev - 1.0) * 100.0 if (prev and prev > 0) else None
+    return {"price": price, "pct": pct, "day_chg": chg, "prev_close": prev,
+            "src": "TradingView", "ts": time.time()}
+
+def fetch_urea_tv_usgulf():
+    """Fallback 1 do spot: contínuo CBOT UFV1! no TV — a MESMA base do TE."""
+    return _tv_quote("CBOT:UFV1!")
+
+def fetch_urea_tv_cfr():
+    """Fallback do CFR Brasil: contínuo CBOT UFB1! no TV (o mesmo ativo
+    do futuro UFB=F do Yahoo; scanner independente)."""
+    return _tv_quote("CBOT:UFB1!")
+
+_PINK = {"series": None, "ts": 0.0}      # série mensal parseada (cache proc.)
+_PINK_LOCK = threading.Lock()
+
+def _pinksheet_xlsx_url():
+    """URL atual do xlsx mensal do Pink Sheet. O caminho tem um hash de
+    documento que o World Bank troca de tempos em tempos — descobre na
+    página oficial; se ela falhar, usa a URL conhecida (reserva)."""
+    try:
+        html = _http_get(WB_CM_PAGE, {"User-Agent": BROWSER_UA},
+                         timeout=20).decode("utf-8", "replace")
+        m = re.search(r"https://thedocs\.worldbank\.org/"
+                      r"[^\"'\s]+CMO-Historical-Data-Monthly\.xlsx", html)
+        if m:
+            return m.group(0)
+        log("pink sheet: página oficial sem link do xlsx")
+    except Exception as e:
+        log(f"pink sheet: página oficial falhou ({e})")
+    return WB_CM_XLSX
+
+_PINK_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+def _pinksheet_parse(raw):
+    """XLSX do Pink Sheet -> série mensal da ureia [(('YYYY-MM', valor))].
+    Só stdlib: zip + XML. Planilha "Monthly Prices" (nomes, r:id no
+    workbook.xml); cabeçalho = linha que tem a célula 'Urea' (com espaço
+    no fim); valor = última célula numérica da coluna (células '…'/vazias
+    pulam). US$/mt f.o.b. Oriente Médio (antes: Black Sea até 2022)."""
+    z = zipfile.ZipFile(io.BytesIO(raw))
+    # workbook.xml: nome da planilha -> rId; rels: rId -> arquivo
+    wb = ET.fromstring(z.read("xl/workbook.xml"))
+    rels = {}
+    for rel in ET.fromstring(z.read("xl/_rels/workbook.xml.rels")):
+        rels[rel.get("Id")] = rel.get("Target")
+    sheet = None
+    for sh in wb.iter(f"{_PINK_NS}sheet"):
+        if sh.get("name") == "Monthly Prices":
+            target = rels.get(sh.get(f"{{http://schemas.openxmlformats.org/"
+                                     f"officeDocument/2006/relationships}}id"))
+            break
+    else:
+        raise ValueError("pink sheet: sem planilha 'Monthly Prices'")
+    if not target:
+        raise ValueError("pink sheet: rel da planilha ausente")
+    strings = []
+    try:
+        for si in ET.fromstring(z.read("xl/sharedStrings.xml")
+                                ).iter(f"{_PINK_NS}si"):
+            strings.append("".join(t.text or "" for t in si.iter(f"{_PINK_NS}t")))
+    except KeyError:
+        pass
+    sh = ET.fromstring(z.read("xl/" + target.lstrip("/")))
+    urea_col, data_rows = None, []
+    for row in sh.iter(f"{_PINK_NS}row"):
+        cells = {}
+        for c in row.iter(f"{_PINK_NS}c"):
+            ref = c.get("r") or ""
+            col = re.match(r"([A-Z]+)", ref)
+            if not col:
+                continue
+            v = c.find(f"{_PINK_NS}v")
+            if c.get("t") == "s" and v is not None:
+                val = strings[int(v.text)] if int(v.text) < len(strings) else ""
+            elif v is not None:
+                val = v.text
+            else:
+                val = None
+            cells[col.group(1)] = val
+        if urea_col is None:
+            for col, val in cells.items():
+                if val and val.strip().lower() == "urea":
+                    urea_col = col
+                    break
+        elif cells.get("A"):
+            data_rows.append((cells.get("A"), cells.get(urea_col)))
+    if not urea_col:
+        raise ValueError("pink sheet: linha 'Urea' não encontrada")
+    pts = []
+    for period, val in data_rows:
+        m = re.match(r"^(\d{4})M(\d{2})$", str(period or ""))
+        if not m:
+            continue
+        try:
+            price = float(val)
+        except (TypeError, ValueError):
+            continue                       # '…', vazio
+        if not price > 0:
+            continue
+        pts.append((f"{m.group(1)}-{m.group(2)}", price))
+    pts.sort()
+    if not pts:
+        raise ValueError("pink sheet: sem pontos válidos de ureia")
+    return pts
+
+def _pinksheet_series():
+    """Série mensal cacheada no processo (xlsx ~600 KB, atual 1x/mês).
+    Thread-safe (poller x popup de gráfico disputam o mesmo cache)."""
+    with _PINK_LOCK:
+        if _PINK["series"] and time.time() - _PINK["ts"] < UREA_PINK_TTL:
+            return _PINK["series"]
+        raw = _http_get(_pinksheet_xlsx_url(), {"User-Agent": BROWSER_UA},
+                        timeout=45)
+        ser = _pinksheet_parse(raw)
+        _PINK["series"] = ser
+        _PINK["ts"] = time.time()
+        return ser
+
+def fetch_urea_pink():
+    """Fallback 2 do spot: último valor mensal do Pink Sheet (f.o.b.
+    Oriente Médio, US$/mt). BASE DIFERENTE do spot diário (Golfo EUA) —
+    o rodapé mostra 'mensal' e a data da série."""
+    ser = _pinksheet_series()
+    day, price = ser[-1]
+    prev = ser[-2][1] if len(ser) >= 2 else None
+    return {"price": price, "pct": None, "day_chg": None, "prev_close": prev,
+            "day": day, "mensal": True,
+            "src": "WB Pink Sheet (mensal)", "ts": time.time()}
+
+def _urea_chain(key, cands):
+    """Cadeia genérica da ureia (padrão v6.4): cada fonte com cooldown
+    próprio; degrau vivo salva; cadeia morta levanta com os erros."""
+    errs = []
+    for name, fn, iv in cands:
+        if not _src_due(name):
+            errs.append(f"{name}: em cooldown")
+            continue
+        try:
+            r = fn()
+            _src_clear(name)
+            return r
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            _src_cooldown(name, iv, str(e))
+    raise RuntimeError(key + " sem fonte viva (" + "; ".join(errs) + ")")
+
+def fetch_urea_me():
+    """Uréia (spot intl.), US$/t. Cadeia (v6.6): TE -> TV UFV1! -> Pink
+    Sheet mensal -> cache (camada de cima mantém)."""
+    return _urea_chain("uréia (spot)", (
+        ("TE-UREA", fetch_urea_te, UREA_REFETCH),
+        ("TV-UF", fetch_urea_tv_usgulf, UREA_REFETCH),
+        ("Pink-UREA", fetch_urea_pink, UREA_REFETCH),
+    ))
+
+def fetch_urea_br_yahoo():
+    """Futuro CBOT/CME ureia CFR Brasil (UFB=F) pelo chart do Yahoo —
+    fonte principal, mesmo pipeline do GC=F/HO=F/BZ=F."""
+    return _fetch_yahoo_future("UFB=F", YAHOO_UREA_BR_URL)
+
+def fetch_urea_br_yahoo_q2():
+    """UFB=F host reserva."""
+    return _fetch_yahoo_future("UFB=F", YAHOO_UREA_BR_URL_Q2)
+
+def fetch_urea_br():
+    """Uréia CFR Brasil (futuro UFB=F), US$/t. Cadeia (v6.6): Yahoo-q1 ->
+    Yahoo-q2 -> TradingView UFB1! -> cache."""
+    return _urea_chain("uréia CFR Brasil", (
+        ("Yahoo-UFB-q1", fetch_urea_br_yahoo, UREA_REFETCH),
+        ("Yahoo-UFB-q2", fetch_urea_br_yahoo_q2, UREA_REFETCH),
+        ("TV-UFB", fetch_urea_tv_cfr, UREA_REFETCH),
+    ))
+
+def _hist_urea_me(days):
+    """Série MENSAL do Pink Sheet p/ o gráfico do spot. Janela < ~2 meses
+    não tem 2 pontos mensais -> levanta (o fetch_history cai pro log
+    local). Datas '2026M08' -> '2026-08'."""
+    days = int(days)
+    ser = _pinksheet_series()
+    cut = (datetime.now(timezone.utc) - timedelta(days=days)
+           ).strftime("%Y-%m")
+    pts = [(d, v) for d, v in ser if d >= cut]
+    if len(pts) < 2:
+        raise ValueError(f"Pink Sheet: {len(pts)} ponto(s) em {days}d")
+    return pts, "WB Pink Sheet (mensal)"
+
+# ----------------------- FETCH · ENXOFRE (v6.7) ------------------------------
+# Enxofre elemental spot da China. Só existe público em CNY/t (o USD spot
+# internacional não é publicado em nenhuma fonte grátis — ver comentário do
+# CONFIG). Cadeia: TE -> SunSirs -> cache; conversão US$/t SÓ com câmbio
+# fresco (nada de USDCNY velho: usa o fx do ciclo, mesmas regras da
+# derivação do BRL).
+def fetch_sulfur_te():
+    """Enxofre spot CN no TradingEconomics (scrape market_last, o mesmo
+    scraper da ureia/HO=F). Unit do TE: CNY/T — preço fica CRUO em CNY;
+    a conversão US$/t acontece no fetch_sulfur com o câmbio do ciclo."""
+    return {**_fetch_te_commodity(TE_SULFUR_URL, SULFUR_CNY_HI), "ts": time.time()}
+
+def _sunsirs_page(url):
+    """HTML da página de produto do SunSirs com o anti-bot HW_CHECK
+    replicado. O 1º GET volta 200 com um script que define o cookie
+    HW_CHECK=<hash de 32 hex> e recarrega (nenhum dado); extraímos o hash
+    da própria resposta e repetimos o GET com o cookie -> página real.
+    urllib puro (header Cookie); sem o cookie a página nunca abre."""
+    html = _http_get(url, {"User-Agent": BROWSER_UA},
+                     timeout=20).decode("utf-8", "replace")
+    if '"HW_CHECK"' in html:
+        m = re.search(r'"([a-f0-9]{32})"', html)
+        if not m:
+            raise ValueError("SunSirs: check sem hash")
+        html = _http_get(url, {"User-Agent": BROWSER_UA,
+                               "Cookie": f"HW_CHECK={m.group(1)}"},
+                         timeout=20).decode("utf-8", "replace")
+    if '"HW_CHECK"' in html:
+        raise ValueError("SunSirs: check de 2ª rodada")
+    return html
+
+def _sunsirs_table(html, name="Sulfur"):
+    """Linhas da tabela de preço diário do SunSirs p/ o produto `name`
+    -> [(data 'YYYY-MM-DD', preço CNY/t)] em ordem de aparição. A tabela
+    traz ['Produto','Setor','Preço','Data']; células com '…'/vazio pulam;
+    valor fora de SULFUR_CNY_LO..HI é rejeitado."""
+    pts = []
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
+        cells = [re.sub(r"<[^>]+>", "", c).strip()
+                 for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S)]
+        if len(cells) < 4 or cells[0] != name:
+            continue
+        try:
+            v = float(cells[2].replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+        if not (SULFUR_CNY_LO < v < SULFUR_CNY_HI):
+            continue
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", cells[3]):
+            continue
+        pts.append((cells[3], v))
+    return pts
+
+def fetch_sulfur_sunsirs():
+    """Enxofre spot CN no SunSirs (tabela própria com 6 dias de histórico).
+    É o mercado raiz do que o TE espelha (valores batem no mesmo dia)."""
+    html = _sunsirs_page(SUNSIRS_SULFUR_URL)
+    pts = _sunsirs_table(html)
+    if not pts:
+        raise ValueError("SunSirs sem linha de Sulfur")
+    by = {}
+    for d, v in pts:                       # dedupe por data (último ganha)
+        by[d] = v
+    ser = sorted(by.items())
+    day, price = ser[-1]
+    prev = ser[-2][1] if len(ser) >= 2 else None
+    pct = (price / prev - 1.0) * 100.0 if prev and prev > 0 else None
+    return {"price": price, "pct": pct,
+            "day_chg": (round(price - prev, 2) if prev else None),
+            "prev_close": prev, "day": day, "series6": ser,
+            "src": "SunSirs", "ts": time.time()}
+
+def _sulfur_usd(price_cny, fx):
+    """Converte CNY/t -> US$/t com o câmbio do ciclo. Exige câmbio PRESENTE
+    e com até FX_MAX_AGE (mesma regra da derivação do BRL). Sem câmbio
+    fresco devolve (None, None) — a UI mostra o CNY/t cru."""
+    if not (fx and fx.get("usdcny") and _fx_fresh(fx)):
+        return None, None
+    rate = float(fx["usdcny"])
+    if rate <= 0:
+        return None, None
+    usd = float(price_cny) / rate
+    return (usd if SULFUR_CNY_LO / rate < usd < SULFUR_CNY_HI / rate
+            else None), rate
+
+def fetch_sulfur(fx):
+    """Enxofre (spot CN), exibição US$/t. Cadeia (v6.7): TE -> SunSirs ->
+    cache (camada de cima mantém). Cada fonte com cooldown próprio; o
+    primeiro degrau vivo converte com o câmbio do ciclo (fx) e preserva
+    o CNY original ('cny_price', 'usdcny_used'). Sem câmbio fresco o
+    registro volta em CNY cru (flag 'cny') — nunca com taxa velha."""
+    errs = []
+    for name, fn, iv in (
+            ("TE-SULFUR", fetch_sulfur_te, SULFUR_REFETCH),
+            ("SunSirs-SULFUR", fetch_sulfur_sunsirs, SULFUR_REFETCH)):
+        if not _src_due(name):
+            errs.append(f"{name}: em cooldown")
+            continue
+        try:
+            r = fn()
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            _src_cooldown(name, iv, str(e))
+            continue
+        p_cny = r.get("price")
+        if not p_cny or not (SULFUR_CNY_LO < p_cny < SULFUR_CNY_HI):
+            errs.append(f"{name}: valor CNY fora de faixa ({p_cny})")
+            _src_cooldown(name, iv, "valor fora de faixa")
+            continue
+        _src_clear(name)
+        usd, rate = _sulfur_usd(p_cny, fx)
+        if usd is None:
+            r["cny"] = True                  # câmbio velho/ausente: cru
+        else:
+            r["cny_price"] = p_cny
+            r["price"] = round(usd, 4)
+            r["usdcny_used"] = rate
+        return r
+    raise RuntimeError("enxofre sem fonte viva (" + "; ".join(errs) + ")")
+
+def _hist_sulfur(days):
+    """Série p/ o gráfico do enxofre. 7D: tabela do SunSirs (6 pontos
+    reais), convertida CNY->US$ com o câmbio de AGORA (nota no rodapé do
+    popup). Janela maior: o SunSirs só dá 6 dias -> levanta (o
+    fetch_history cai pro log local, que acumula US$/t desde a v6.7)."""
+    days = int(days)
+    if days > 7:
+        raise ValueError(f"SunSirs só dá 6 dias (pedido {days}d)")
+    html = _sunsirs_page(SUNSIRS_SULFUR_URL)
+    pts_raw = _sunsirs_table(html)
+    if len(pts_raw) < 2:
+        raise ValueError(f"SunSirs: {len(pts_raw)} ponto(s) na tabela")
+    by = {}
+    for d, v in pts_raw:
+        by[d] = v
+    ser = sorted(by.items())
+    _, rate = _sulfur_usd(ser[-1][1], fetch_fx())
+    if not rate:
+        raise ValueError("sem câmbio p/ converter a série SunSirs")
+    pts = [(d, round(v / rate, 4)) for d, v in ser]
+    if len(pts) < 2:
+        raise ValueError("SunSirs: série curta")
+    return pts, "SunSirs (CNY÷USDCNY de hoje)"
 
 def fetch_sina_future():
     """Futuro SHFE ouro (nf_AU0, contrato main) direto da Sina.
@@ -2141,9 +3019,14 @@ if tk is not None:
             def work():
                 try:
                     res = self.app.fetch_history_cached(key, days)
-                    self.app.root.after(0, lambda: self._done(res, None))
+                    self.app.root.after(0, lambda r=res: self._done(r, None))
                 except Exception as ex:
-                    self.app.root.after(0, lambda: self._done(None, ex))
+                    # v6.7: `ex` é deletado ao sair do except (cleanup do
+                    # Python) — a lambda morria com NameError quando o
+                    # callback rodava e o popup ficava eterno no
+                    # "carregando…". Bind antecipado (default arg).
+                    msg = str(ex)
+                    self.app.root.after(0, lambda e=msg: self._done(None, e))
 
             threading.Thread(target=work, daemon=True).start()
 
@@ -2375,6 +3258,24 @@ class GoldWidget:
                                     font=("DejaVu Sans", 7))
         self.l_brent_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
+        # ------------- seção CHINA · CRUDE SC (XANGAI, v6.8) ---------------
+        self.sc_frame = tk.Frame(self.frame, bg=BG)
+        self.sc_frame.pack(anchor="w", padx=12, fill="x")
+        self._sc_sig = None
+        self._sc_refs = []
+        self.l_sc_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+                                 font=("DejaVu Sans", 7))
+        self.l_sc_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
+        # ------------- seção EMIRADOS · CRUDE MURBAN (v6.9) ----------------
+        self.murban_frame = tk.Frame(self.frame, bg=BG)
+        self.murban_frame.pack(anchor="w", padx=12, fill="x")
+        self._murban_sig = None
+        self._murban_refs = []
+        self.l_murban_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+                                     font=("DejaVu Sans", 7))
+        self.l_murban_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
         # --------------- seção RÚSSIA · CRUDE URALS (v6.2) ----------------
         self.urals_frame = tk.Frame(self.frame, bg=BG)
         self.urals_frame.pack(anchor="w", padx=12, fill="x")
@@ -2383,6 +3284,24 @@ class GoldWidget:
         self.l_urals_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
                                     font=("DejaVu Sans", 7))
         self.l_urals_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
+        # ------------- seção FERTILIZANTE · UREIA (v6.6) -------------------
+        self.urea_frame = tk.Frame(self.frame, bg=BG)
+        self.urea_frame.pack(anchor="w", padx=12, fill="x")
+        self._urea_sig = None
+        self._urea_refs = []
+        self.l_urea_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+                                   font=("DejaVu Sans", 7))
+        self.l_urea_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
+        # ---------------- seção ENXOFRE · SPOT CN (v6.7) -------------------
+        self.sulfur_frame = tk.Frame(self.frame, bg=BG)
+        self.sulfur_frame.pack(anchor="w", padx=12, fill="x")
+        self._sulfur_sig = None
+        self._sulfur_refs = []
+        self.l_sulfur_sub = tk.Label(self.frame, text="", bg=BG, fg=TXT_DIM,
+                                     font=("DejaVu Sans", 7))
+        self.l_sulfur_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # ----------------------- menu de botão direito ----------------------
         self.menu = tk.Menu(root, tearoff=0)
@@ -2397,7 +3316,12 @@ class GoldWidget:
                     ("CDS Brasil 5 anos", "cds_5y"),
                     ("Diesel NYMEX", "ho_f"),
                     ("Brent (benchmark)", "brent"),
-                    ("Urals (Rússia)", "urals")):
+                    ("Crude SC (Xangai)", "sc_f"),
+                    ("Murban (Emirados)", "murban"),
+                    ("Urals (Rússia)", "urals"),
+                    ("Uréia (spot intl.)", "urea_me"),
+                    ("Uréia CFR Brasil", "urea_br"),
+                    ("Enxofre (spot CN)", "sulfur")):
                 gmenu.add_command(label=_lbl,
                                   command=lambda k=_hk: self.open_history(k))
             self.menu.add_cascade(label="Ver grafico", menu=gmenu)
@@ -2423,7 +3347,10 @@ class GoldWidget:
                          (self.l_sub, None),
                          (self.l_us_sub, None), (self.l_cds_sub, None),
                          (self.l_ho_sub, None), (self.l_brent_sub, None),
-                         (self.l_urals_sub, None)):
+                         (self.l_sc_sub, None),
+                         (self.l_murban_sub, None),
+                         (self.l_urals_sub, None), (self.l_urea_sub, None),
+                         (self.l_sulfur_sub, None)):
             self._bind(w, hk)
 
         # posição inicial: canto superior direito
@@ -2494,6 +3421,10 @@ class GoldWidget:
         if name.startswith("Gasolina"):
             return "fuel_gas"
         return "fuel_diesel"
+
+    @staticmethod
+    def _urea_hist_key(name):
+        return "urea_br" if "CFR" in name else "urea_me"
 
     def _hist_meta(self, key):
         if key.startswith("bank:"):
@@ -2734,10 +3665,86 @@ class GoldWidget:
         if br and time.time() - br.get("ts", 0) > BRENT_MAX_AGE:
             self.last.pop("brent", None)
             log("brent: cache >4 dias sem fonte; removido")
+
+        # ---- China · Crude SC (v6.8): intraday (sessão noturna), refetch
+        #      no máx. 1/5min; cadeia Sina -> futsseapi -> push2delay ->
+        #      cache; conversão US$/bbl só com câmbio fresco; falha isolada
+        sc = self.last.get("sc_fut")
+        if _due("sc", sc, SC_REFETCH):
+            try:
+                self.last["sc_fut"] = fetch_sc(fx)
+                _cooldown_clear("sc")
+            except Exception as e:
+                log(f"crude SC indisponível ({e}); mantendo cache")
+                _cooldown("sc", SC_REFETCH, str(e))
+        sc = self.last.get("sc_fut")
+        if sc and time.time() - sc.get("ts", 0) > SC_MAX_AGE:
+            self.last.pop("sc_fut", None)
+            log("crude SC: cache >4 dias sem fonte; removido")
+
+        # ---- Emirados · Crude Murban (v6.9): avaliação ADNOC com delay,
+        #      refetch no máx. 1/h; cadeia tabela -> freewidgets -> cache;
+        #      falha isolada das demais seções ----
+        mu = self.last.get("murban")
+        if _due("murban", mu, MURBAN_REFETCH):
+            try:
+                self.last["murban"] = fetch_murban()
+                _cooldown_clear("murban")
+            except Exception as e:
+                log(f"crude Murban indisponível ({e}); mantendo cache")
+                _cooldown("murban", MURBAN_REFETCH, str(e))
+        mu = self.last.get("murban")
+        if mu and time.time() - mu.get("ts", 0) > MURBAN_MAX_AGE:
+            self.last.pop("murban", None)
+            log("crude Murban: cache >7 dias sem fonte; removido")
         ur = self.last.get("urals")
         if ur and time.time() - ur.get("ts", 0) > URALS_MAX_AGE:
             self.last.pop("urals", None)
             log("crude Urals: cache >7 dias sem fonte; removido")
+
+        # ---- Fertilizante · Uréia (v6.6): 2 linhas independentes (spot +
+        #      CFR Brasil), refetch no máx. 1/h, falha isolada uma da outra
+        #      (TE -> TV -> Pink -> cache / Yahoo-UFB -> TV -> cache) ----
+        um = self.last.get("urea_me")
+        if _due("urea_me", um, UREA_REFETCH):
+            try:
+                self.last["urea_me"] = fetch_urea_me()
+                _cooldown_clear("urea_me")
+            except Exception as e:
+                log(f"uréia (spot) indisponível ({e}); mantendo cache")
+                _cooldown("urea_me", UREA_REFETCH, str(e))
+        um = self.last.get("urea_me")
+        if um and time.time() - um.get("ts", 0) > UREA_MAX_AGE:
+            self.last.pop("urea_me", None)
+            log("uréia (spot): cache >14 dias sem fonte; removido")
+        ub = self.last.get("urea_br")
+        if _due("urea_br", ub, UREA_REFETCH):
+            try:
+                self.last["urea_br"] = fetch_urea_br()
+                _cooldown_clear("urea_br")
+            except Exception as e:
+                log(f"uréia CFR Brasil indisponível ({e}); mantendo cache")
+                _cooldown("urea_br", UREA_REFETCH, str(e))
+        ub = self.last.get("urea_br")
+        if ub and time.time() - ub.get("ts", 0) > UREA_MAX_AGE:
+            self.last.pop("urea_br", None)
+            log("uréia CFR Brasil: cache >14 dias sem fonte; removido")
+
+        # ---- Enxofre · spot CN (v6.7): diário, refetch no máx. 1/h;
+        #      cadeia TE -> SunSirs -> cache; conversão US$/t só com
+        #      câmbio fresco (sem câmbio: mostra CNY/t cru) ----
+        sf = self.last.get("sulfur")
+        if _due("sulfur", sf, SULFUR_REFETCH):
+            try:
+                self.last["sulfur"] = fetch_sulfur(fx)
+                _cooldown_clear("sulfur")
+            except Exception as e:
+                log(f"enxofre indisponível ({e}); mantendo cache")
+                _cooldown("sulfur", SULFUR_REFETCH, str(e))
+        sf = self.last.get("sulfur")
+        if sf and time.time() - sf.get("ts", 0) > SULFUR_MAX_AGE:
+            self.last.pop("sulfur", None)
+            log("enxofre: cache >14 dias sem fonte; removido")
 
         usd_ok = False
         if usd:
@@ -2825,6 +3832,21 @@ class GoldWidget:
             _br = _L.get("brent") or {}
             if _br.get("price"):
                 log_hist_point(_H, "brent", _br["price"])
+            _sc = _L.get("sc_fut") or {}
+            if _sc.get("price") and _sc.get("usdcny_used"):
+                log_hist_point(_H, "sc_f", _sc["price"])
+            _mu = _L.get("murban") or {}
+            if _mu.get("price"):
+                log_hist_point(_H, "murban", _mu["price"])
+            _um = _L.get("urea_me") or {}
+            if _um.get("price"):
+                log_hist_point(_H, "urea_me", _um["price"])
+            _ub = _L.get("urea_br") or {}
+            if _ub.get("price"):
+                log_hist_point(_H, "urea_br", _ub["price"])
+            _sf = _L.get("sulfur") or {}
+            if _sf.get("price") and _sf.get("usdcny_used"):
+                log_hist_point(_H, "sulfur", _sf["price"])
             save_hist_log(_H)
         except Exception as e:
             log(f"falha no log de historico: {e}")
@@ -2901,9 +3923,25 @@ class GoldWidget:
         self._render_brent()
         self._render_brent_sub()
 
+        # seção CHINA · crude SC Xangai (v6.8)
+        self._render_sc()
+        self._render_sc_sub()
+
+        # seção EMIRADOS · crude Murban (v6.9)
+        self._render_murban()
+        self._render_murban_sub()
+
         # seção RÚSSIA · crude Urals (v6.2)
         self._render_urals()
         self._render_urals_sub()
+
+        # seção FERTILIZANTE · ureia (v6.6)
+        self._render_urea()
+        self._render_urea_sub()
+
+        # seção ENXOFRE · spot CN (v6.7)
+        self._render_sulfur()
+        self._render_sulfur_sub()
 
         # re-encosta no canto com a largura real (a menos que o user arrastou)
         if not self._user_moved:
@@ -3289,6 +4327,169 @@ class GoldWidget:
                 parts.append("(cache)")
         self.l_brent_sub.config(text=" · ".join(parts), fg=TXT_DIM)
 
+    # ------------- exibição · seção CHINA · CRUDE SC (v6.8) ----------------
+    def _sc_label(self, rec=None):
+        """Rótulo da linha: 'SC · contínuo' (+ ' · (cache)' após FUT_STALE)."""
+        rec = rec or {}
+        nome = "SC · contínuo (INE)"
+        if rec.get("ts") and time.time() - rec["ts"] > FUT_STALE:
+            nome += " · (cache)"
+        return nome
+
+    def _sc_rows(self):
+        d = self.last.get("sc_fut") or {}
+        rows = []
+        if d.get("price"):
+            rows.append((("h", "── CHINA · CRUDE SC (XANGAI) ──"), None, None))
+            unit = "CNY" if d.get("cny") else "US$"
+            rows.append((("r", self._sc_label(d)),
+                         f"{unit} {fmt_usd(d['price'])}/bbl",
+                         d.get("pct")))
+        return rows
+
+    def _render_sc(self):
+        rows = self._sc_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._sc_sig:
+            for w in self.sc_frame.winfo_children():
+                w.destroy()
+            self._sc_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.sc_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._sc_refs.append(("h", lab))
+                else:
+                    ln = tk.Label(self.sc_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.sc_frame, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.sc_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, "sc_f")
+                    self._sc_refs.append(("r", ln, lp, lv))
+                grid += 1
+            self.sc_frame.columnconfigure(0, weight=1)
+            self._sc_sig = sig
+
+        for ref, r in zip(self._sc_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, pct = r[1], r[2]
+            lp.config(text=price_str, fg=TXT_USD)
+            if pct is None:
+                lv.config(text="")
+            else:
+                lv.config(text=fmt_pct(pct),
+                          fg=UP_COLOR if pct >= 0 else DOWN_COLOR)
+
+    def _render_sc_sub(self):
+        d = self.last.get("sc_fut") or {}
+        parts = []
+        if d.get("price"):
+            if d.get("cny"):
+                parts.append("sem câmbio fresco: valor cru em CNY")
+            if d.get("cny_price"):
+                parts.append(f"original CNY {d['cny_price']:,.2f}/bbl")
+            if d.get("usdcny_used"):
+                parts.append(f"USDCNY {d['usdcny_used']:.4f}")
+            p = [f"spot {d.get('src', '?')}"]
+            if d.get("ts"):
+                p.append(f"há {max(0, int(time.time() - d['ts']))}s")
+            parts.append(" · ".join(p))
+        self.l_sc_sub.config(text="  ·  ".join(parts), fg=TXT_DIM)
+
+    # --------------- exibição · seção EMIRADOS · MURBAN (v6.9) -------------
+    def _murban_rows(self):
+        d = self.last.get("murban") or {}
+        rows = []
+        if d.get("price"):
+            rows.append((("h", "── EMIRADOS · CRUDE MURBAN ──"), None, None))
+            nome = "Murban (FOB)"
+            if d.get("ts") and time.time() - d["ts"] > MURBAN_REFETCH * 2:
+                nome += " · (cache)"
+            rows.append((("r", nome),
+                         f"US$ {fmt_usd(d['price'])}/bbl",
+                         d.get("pct")))
+        return rows
+
+    def _render_murban(self):
+        rows = self._murban_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._murban_sig:
+            for w in self.murban_frame.winfo_children():
+                w.destroy()
+            self._murban_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.murban_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._murban_refs.append(("h", lab))
+                else:
+                    ln = tk.Label(self.murban_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.murban_frame, text="—", bg=BG,
+                                  fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.murban_frame, text="", bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="e")
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, "murban")
+                    self._murban_refs.append(("r", ln, lp, lv))
+                grid += 1
+            self.murban_frame.columnconfigure(0, weight=1)
+            self._murban_sig = sig
+
+        for ref, r in zip(self._murban_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, pct = r[1], r[2]
+            lp.config(text=price_str, fg=TXT_USD)
+            if pct is None:
+                lv.config(text="")
+            else:
+                lv.config(text=fmt_pct(pct),
+                          fg=UP_COLOR if pct >= 0 else DOWN_COLOR)
+
+    def _render_murban_sub(self):
+        d = self.last.get("murban") or {}
+        parts = []
+        if d.get("price"):
+            if d.get("delay"):
+                parts.append(f"avaliação spot · delay {d['delay']}")
+            if d.get("day"):
+                parts.append(f"dado {d['day']}")
+        ts = d.get("ts")
+        if ts:
+            parts.append(f"{d.get('src', '?')} há {max(0, int(time.time() - ts))}s")
+            if time.time() - ts > MURBAN_REFETCH * 2:
+                parts.append("(cache)")
+        self.l_murban_sub.config(text=" · ".join(parts), fg=TXT_DIM)
+
     # --------------- exibição · seção RÚSSIA · CRUDE URALS (v6.2) ----------
     def _urals_rows(self):
         d = self.last.get("urals") or {}
@@ -3363,6 +4564,187 @@ class GoldWidget:
                 parts.append("(cache)")
         self.l_urals_sub.config(text=" · ".join(parts), fg=TXT_DIM)
 
+    # -------------- exibição · seção FERTILIZANTE · UREIA (v6.6) -----------
+    def _urea_br_label(self, rec=None):
+        """Rótulo da linha CFR: 'UFB=F' (+ mês se o shortName do Yahoo
+        traz mês tipo 'Nov 26'; o TV scanner não traz mês) + '(cache)'
+        quando o dado passa de 2 refetches."""
+        rec = rec or {}
+        nome = "Uréia CFR Brasil (UFB=F)"
+        parts = (rec.get("name") or "").split()
+        if len(parts) >= 2 and parts[-2] in MONTH_PT:
+            nome += f" · {MONTH_PT[parts[-2]]}/{parts[-1]}"
+        if rec.get("ts") and time.time() - rec["ts"] > UREA_REFETCH * 2:
+            nome += " · (cache)"
+        return nome
+
+    def _urea_rows(self):
+        me = self.last.get("urea_me") or {}
+        br = self.last.get("urea_br") or {}
+        rows = []
+        if me.get("price") or br.get("price"):
+            rows.append((("h", "── FERTILIZANTE · UREIA ──"), None, None))
+            if me.get("price"):
+                nome = "Uréia (spot intl.)"
+                if me.get("mensal"):
+                    nome = "Uréia (mensal · f.o.b. Oriente Médio)"
+                if (me.get("ts")
+                        and time.time() - me["ts"] > UREA_REFETCH * 2):
+                    nome += " · (cache)"
+                rows.append((("r", nome),
+                             f"US$ {fmt_usd(me['price'])}/t", me.get("pct")))
+            if br.get("price"):
+                rows.append((("r", self._urea_br_label(br)),
+                             f"US$ {fmt_usd(br['price'])}/t", br.get("pct")))
+        return rows
+
+    def _render_urea(self):
+        rows = self._urea_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._urea_sig:
+            for w in self.urea_frame.winfo_children():
+                w.destroy()
+            self._urea_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.urea_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._urea_refs.append(("h", lab))
+                else:
+                    ln = tk.Label(self.urea_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.urea_frame, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.urea_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, self._urea_hist_key(r[0][1]))
+                    self._urea_refs.append(("r", ln, lp, lv))
+                grid += 1
+            self.urea_frame.columnconfigure(0, weight=1)
+            self._urea_sig = sig
+
+        for ref, r in zip(self._urea_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, pct = r[1], r[2]
+            lp.config(text=price_str, fg=TXT_USD)
+            if pct is None:
+                lv.config(text="")
+            else:
+                lv.config(text=fmt_pct(pct),
+                          fg=UP_COLOR if pct >= 0 else DOWN_COLOR)
+
+    def _render_urea_sub(self):
+        parts = []
+        me = self.last.get("urea_me") or {}
+        if me.get("price"):
+            p = [f"spot {me.get('src', '?')}"]
+            if me.get("day"):
+                p.append(str(me["day"]))
+            if me.get("ts"):
+                p.append(f"há {max(0, int(time.time() - me['ts']))}s")
+            parts.append(" · ".join(p))
+        br = self.last.get("urea_br") or {}
+        if br.get("price"):
+            p = [f"CFR {br.get('src', '?')}"]
+            if br.get("ts"):
+                p.append(f"há {max(0, int(time.time() - br['ts']))}s")
+            parts.append(" · ".join(p))
+        self.l_urea_sub.config(text="  ·  ".join(parts), fg=TXT_DIM)
+
+    # ---------------- exibição · seção ENXOFRE · SPOT CN (v6.7) -----------
+    def _sulfur_rows(self):
+        d = self.last.get("sulfur") or {}
+        rows = []
+        if d.get("price"):
+            rows.append((("h", "── ENXOFRE · SPOT CN ──"), None, None))
+            nome = "Enxofre (spot CN)"
+            if d.get("ts") and time.time() - d["ts"] > SULFUR_REFETCH * 2:
+                nome += " · (cache)"
+            if d.get("cny"):
+                rows.append((("r", nome),
+                             f"CNY {fmt_usd(d['price'])}/t", d.get("pct")))
+            else:
+                rows.append((("r", nome),
+                             f"US$ {fmt_usd(d['price'])}/t", d.get("pct")))
+        return rows
+
+    def _render_sulfur(self):
+        rows = self._sulfur_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._sulfur_sig:
+            for w in self.sulfur_frame.winfo_children():
+                w.destroy()
+            self._sulfur_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.sulfur_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._sulfur_refs.append(("h", lab))
+                else:
+                    ln = tk.Label(self.sulfur_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.sulfur_frame, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.sulfur_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, "sulfur")
+                    self._sulfur_refs.append(("r", ln, lp, lv))
+                grid += 1
+            self.sulfur_frame.columnconfigure(0, weight=1)
+            self._sulfur_sig = sig
+
+        for ref, r in zip(self._sulfur_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, pct = r[1], r[2]
+            lp.config(text=price_str, fg=TXT_USD)
+            if pct is None:
+                lv.config(text="")
+            else:
+                lv.config(text=fmt_pct(pct),
+                          fg=UP_COLOR if pct >= 0 else DOWN_COLOR)
+
+    def _render_sulfur_sub(self):
+        d = self.last.get("sulfur") or {}
+        parts = []
+        if d.get("price"):
+            if d.get("cny"):
+                parts.append("sem câmbio fresco: valor cru em CNY")
+            p = [f"spot {d.get('src', '?')}"]
+            if d.get("day"):
+                p.append(str(d["day"]))
+            if d.get("ts"):
+                p.append(f"há {max(0, int(time.time() - d['ts']))}s")
+            if d.get("usdcny_used"):
+                p.append(f"USDCNY {d['usdcny_used']:.4f}")
+            parts.append(" · ".join(p))
+        self.l_sulfur_sub.config(text="  ·  ".join(parts), fg=TXT_DIM)
+
     def _tick(self):
         if self.stop.is_set():
             return
@@ -3371,7 +4753,11 @@ class GoldWidget:
         self._render_cds_sub()      # reavalia idade/cache do CDS
         self._render_ho_sub()       # reavalia idade/cache do HO=F
         self._render_brent_sub()    # reavalia idade/cache do Brent
+        self._render_sc_sub()       # reavalia idade/cache do crude SC
+        self._render_murban_sub()   # reavalia idade/cache do Murban
         self._render_urals_sub()    # reavalia idade/cache do Urals
+        self._render_urea_sub()     # reavalia idade/cache da ureia
+        self._render_sulfur_sub()   # reavalia idade/cache do enxofre
         self.root.after(5000, self._tick)
 
     # ----------------------------- saída --------------------------------
@@ -3469,6 +4855,37 @@ def dump():
         print(f"BRENT: FALHOU ({e})")
 
     try:
+        s = fetch_sc(last.get("fx"))
+        last["sc_fut"] = s
+        extra = []
+        if s.get("pct") is not None:
+            extra.append(f"{s['pct']:+.2f}%")
+        if s.get("cny_price"):
+            extra.append(f"cru CNY {s['cny_price']:,.2f}")
+        if s.get("usdcny_used"):
+            extra.append(f"USDCNY {s['usdcny_used']:.4f}")
+        unit = "CNY/bbl (cru)" if s.get("cny") else "US$/bbl"
+        print(f"CRUDE SC XANGAI [{s['src']}]: {s['price']:,.2f} {unit} "
+              f"({', '.join(extra) if extra else '—'})")
+    except Exception as e:
+        print(f"CRUDE SC XANGAI: FALHOU ({e})")
+
+    try:
+        mu = fetch_murban()
+        last["murban"] = mu
+        extra = []
+        if mu.get("pct") is not None:
+            extra.append(f"{mu['pct']:+.2f}%")
+        if mu.get("day_chg") is not None:
+            extra.append(f"Δ {mu['day_chg']:+.2f}")
+        if mu.get("delay"):
+            extra.append(f"delay {mu['delay']}")
+        print(f"CRUDE MURBAN [{mu['src']}]: {mu['price']:,.2f} US$/bbl "
+              f"({', '.join(extra) if extra else '—'} · dado {mu.get('day', '?')})")
+    except Exception as e:
+        print(f"CRUDE MURBAN: FALHOU ({e})")
+
+    try:
         u = fetch_urals()
         last["urals"] = u
         extra = []
@@ -3482,6 +4899,52 @@ def dump():
               f"({', '.join(extra) if extra else '—'} · dado {u.get('day', '?')})")
     except Exception as e:
         print(f"CRUDE URALS: FALHOU ({e})")
+
+    try:
+        um = fetch_urea_me()
+        last["urea_me"] = um
+        extra = []
+        if um.get("pct") is not None:
+            extra.append(f"{um['pct']:+.2f}%")
+        if um.get("day"):
+            extra.append(f"dado {um['day']}")
+        if um.get("mensal"):
+            extra.append("série mensal")
+        print(f"UREIA SPOT [{um['src']}]: {um['price']:,.2f} US$/t "
+              f"({', '.join(extra) if extra else '—'})")
+    except Exception as e:
+        print(f"UREIA SPOT: FALHOU ({e})")
+
+    try:
+        ub = fetch_urea_br()
+        last["urea_br"] = ub
+        extra = []
+        if ub.get("pct") is not None:
+            extra.append(f"{ub['pct']:+.2f}%")
+        if ub.get("month") or ub.get("name"):
+            extra.append(f"contrato {ub.get('month') or ub.get('name')}")
+        print(f"UREIA CFR BRASIL [{ub['src']}]: {ub['price']:,.2f} US$/t "
+              f"({', '.join(extra) if extra else '—'})")
+    except Exception as e:
+        print(f"UREIA CFR BRASIL: FALHOU ({e})")
+
+    try:
+        sf = fetch_sulfur(last.get("fx"))
+        last["sulfur"] = sf
+        extra = []
+        if sf.get("pct") is not None:
+            extra.append(f"{sf['pct']:+.2f}%")
+        if sf.get("day"):
+            extra.append(f"dado {sf['day']}")
+        if sf.get("cny_price"):
+            extra.append(f"cru CNY {sf['cny_price']:,.2f}")
+        if sf.get("usdcny_used"):
+            extra.append(f"USDCNY {sf['usdcny_used']:.4f}")
+        unit = "CNY/t (cru)" if sf.get("cny") else "US$/t"
+        print(f"ENXOFRE SPOT CN [{sf['src']}]: {sf['price']:,.2f} {unit} "
+              f"({', '.join(extra) if extra else '—'})")
+    except Exception as e:
+        print(f"ENXOFRE SPOT CN: FALHOU ({e})")
 
     print("\nCHINA/COMEX: removidos a pedido do usuário")
     return 0
@@ -3501,7 +4964,9 @@ def main():
         print("Sem display gráfico (DISPLAY não definido).", file=sys.stderr)
         return 1
 
-    log("iniciando widget (v6.5: COMEX GC=F + China removidos a pedido do usuario)")
+    log("iniciando widget (v7.0: + URALS T+1 — degraus TradingEconomics"
+        " urals-oil e minfin.com.ua à frente do OilPrice.com (T+2);"
+        " delay exibido calculado da data real do dado)")
     root = tk.Tk()
     GoldWidget(root)
     root.mainloop()

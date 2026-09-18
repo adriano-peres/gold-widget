@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.x-3776AB?logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/plataforma-Linux%20%C2%B7%20X11-FCC624?logo=linux&logoColor=black)
 ![Dependências](https://img.shields.io/badge/depend%C3%AAncias-somente%20stdlib-00A86B)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-v6.5-c9a227)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-v7.0-c9a227)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20pessoal-lightgrey)
 
 Widget de desktop em **Python puro** (tkinter) que mostra o **preço do ouro spot em tempo real** direto na sua área de trabalho — em **USD/onça** e **R$/grama** — além da **média de varejo dos combustíveis nos EUA** (gasolina e diesel de bomba, US$/gal).
@@ -208,6 +208,7 @@ A solução: o widget cria-se como tipo `desktop` e depois envia ao WM um *clien
 | **v5.5** | **Cadeia de fallback do combustível**: AmericasOilWatch → EIA dnav → FRED → EIA API v2 (opcional); expiração do cache em 14 dias; header `Accept` global (FRED tarja requisições sem ele) |
 | **v5.6** | **Fusão das forks**: o repo passa a ter tudo — spot, China, COMEX GC=F e combustível com fallbacks |
 | **v6.5** | **Remoção** do futuro COMEX (GC=F) e de toda a seção China (SGE/SHFE, Base China Gold, barras de banco) + buscas correspondentes |
+| **v7.0** | **Urals com delay halvo (T+1)**: TradingEconomics `urals-oil` (scrape `market_last` + data real do resumo) e minfin.com.ua entram como degraus 1-2, à frente do OilPrice.com (T+2); delay exibido calculado da data real do dado |
 
 ## Licença
 
