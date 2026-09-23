@@ -312,7 +312,7 @@ v5.8:
         e transport error testados); ProFinance sem Urals; FRED/EIA/IMF/
         Pink Sheet mensais. Tempo real verdadeiro exige terminal pago
         (Bloomberg/Reuters/Argus/Platts).
-  v7.1 (ESTA VERSAO, a pedido do usuário):
+  v7.1 (a pedido do usuário):
       * NOVO — janela REDIMENSIONÁVEL: arrastar a borda/canto invisível
         (6px nas bordas, 14px nos cantos; cursor muda por direção; nada
         aparece na UI). Resize DIRECIONAL: bordas oeste/norte movem a
@@ -335,7 +335,56 @@ v5.8:
         explícito (edge_r/l/b/t, grip_se/sw/ne/nw) para debug/hit-test;
         guardas _resizing nos handlers de arraste (bindtags do toplevel
         disparavam o mover-janela junto com o resize).
-Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
+ v7.2 (ESTA VERSAO, a pedido do usuário):
+      * NOVO — seção "COBRE · COMEX (HG=F)": futuro contínuo do cobre
+        (benchmark global do metal, US$/lb), cotação intraday com
+        variação vs fechamento anterior. Posição: logo abaixo do
+        OURO · SPOT (metal junto de metal).
+      * Cadeia (cada fonte com cooldown próprio, padrão v6.4):
+          - Yahoo HG=F (chart API, q1 -> q2 em 429)      [principal]
+          - FXEmpire /commodities/copper (blob react-query do SSR;
+            marker "vendorSymbol":"HG" único na página; quote direto no
+            data, NÃO em prices[...] como o Brent). O top-level espelha
+            o contrato MAIS LÍQUIDO (dez/26, OI 171.866 — conferido ao
+            vivo; o front set/26 tem OI 1.363), por isso NÃO usamos o
+            front-pick do HO=F: aqui o benchmark É o mais ativo.
+            Mesma base do TE (conferido no mesmo instante: FXE 6.836
+            vs TE 6.8306)                            [fallback 1]
+          - TradingEconomics /commodity/copper (scrape market_last,
+            mesmo scraper do HO=F/ureia/sulfur/urals) [fallback 2]
+          - cache local, etiqueta "(cache)" após FUT_STALE (10 min) e
+            expiração em 4 dias (cobre o fim de semana sem pregão).
+      * Refetch no máx. 1/5min (intraday, igual HO/Brent; o throttle
+        global de 1,5s do Yahoo e o 429 = falha dupla já protegem o
+        HG=F, que disputa o mesmo IP do GC/HO/BZ). Gráfico no clique:
+        série diária do Yahoo HG=F (7D-1A), fallback no log local.
+        Falha isolada das demais seções.
+  v7.3 (ESTA VERSAO, a pedido do usuário):
+      * NOVO — linha "CU0 · SHFE" dentro da seção COBRE: o cobre da CHINA
+        (contrato principal contínuo CU0 = 沪铜主连 da Shanghai Futures
+        Exchange, CNY/t com tick 10; ~US$ 7.1/lb hoje vs US$ 6.8/lb do
+        COMEX). MESMA UNIDADE da linha de cima (US$/lb) p/ comparar o
+        prêmio SHFE de graça. Investigação ao vivo (2026-09-22): a Sina
+        CU0 == CU2611 (contrato principal REAL, flag is-main=1; OI 23.3k)
+        e o EM 113.cum é a série EMENDADA (nível ~0,4% diferente do
+        contrato cru, pct próprio consistente). Cadeia (mesma infra
+        validada do SC v6.8; cada fonte com cooldown próprio):
+          - Sina nf_CU0 [principal]: realtime-ish (sessão noturna 21:00-
+            01:00 BJT; a cotação "do dia" entra com a data do pregão
+            seguinte); f[8]=último, f[27]=昨结算 (settlement — base da
+            variação do dia, convenção chinesa)
+          - Eastmoney futsseapi 113_cum_qt [2º]: p=último, j=昨结算
+          - Eastmoney push2delay 113.cum [3º]: f43 na escala f152 (preço
+            puro — o f170 calcula vs limite, não serve pct)
+          - cache local, "(cache)" após FUT_STALE (10 min), expira 4 dias
+        US$/lb = CNY/t ÷ USDCNY ÷ 2204.62262 (lb/t) — USDCNY FRESH do
+        fetch_fx (3 fontes, ≤ 15 min); sem câmbio fresco: CNY/t cru
+        (nunca com taxa velha). Var % calculada em CNY (idêntica em US$:
+        a taxa é constante dentro do dia). Gráfico no clique: kline
+        diário 113.cum (== Sina kline CU0, conferido: fech. 22/09
+        111.320 nas duas) ÷ USDCNY ÷ lb, fallback no log local (US$/lb
+        desde a v7.3). Falha isolada das demais seções.
+ Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
  """
 
 import io
@@ -496,6 +545,66 @@ TE_GC_URL     = "https://tradingeconomics.com/commodity/gold"
 HO_REFETCH    = 5 * 60               # dado intraday; refetch no máx. 1/5min
 HO_MAX_AGE    = 4 * 86400            # cache vence (4 dias; cobre fim de semana)
 
+# ------------------- CONFIG · COBRE COMEX HG=F (v7.2) ------------------------
+# Futuro cobre (High Grade) da COMEX — o benchmark global do cobre, em
+# US$/lb. Cadeia (Yahoo -> FXEmpire -> TradingEconomics -> cache), todas
+# sem chave; cada fonte com cooldown próprio (padrão v6.4):
+#   - Yahoo: chart API do contínuo HG=F, igual GC=F/HO=F/BZ=F.
+#   - FXEmpire: /commodities/copper — blob react-query no SSR, quote
+#     DIRETO no data (marker "vendorSymbol":"HG" único; o Brent usa
+#     prices[...] mas este é plano). O top-level espelha o contrato
+#     MAIS LÍQUIDO (dez/26, OI 171.866; front set/26 OI 1.363 —
+#     conferido ao vivo 22/09/2026), por isso NÃO se faz o front-pick
+#     do HO: no cobre o benchmark é o contrato mais ativo, e o TE
+#     (6.8306) confirma a MESMA base do FXE top (6.836).
+#   - TradingEconomics: scrape market_last (mesmo scraper do HO=F/
+#     ureia/sulfur/urals), referência CFD do contrato principal.
+YAHOO_HG_URL    = ("https://query1.finance.yahoo.com/v8/finance/chart/HG=F"
+                   "?interval=1d&range=5d")   # 5 barras: atual + anteriores
+YAHOO_HG_URL_Q2 = ("https://query2.finance.yahoo.com/v8/finance/chart/HG=F"
+                   "?interval=1d&range=5d")   # host reserva (mesma API)
+FXE_COPPER_URL  = "https://www.fxempire.com/commodities/copper"
+TE_COPPER_URL   = "https://tradingeconomics.com/commodity/copper"
+HG_REFETCH      = 5 * 60               # intraday: refetch no máx. 1/5min
+HG_MAX_AGE      = 4 * 86400            # cache vence (4 dias; cobre fds)
+HG_USD_LO       = 0.5                  # sanidade US$/lb (hist ~1.9..6.9)
+HG_USD_HI       = 20.0                 # teto folgado (~US$ 44k/t)
+
+# ------------------- CONFIG · COBRE SHFE CU0 (China, v7.3) --------------------
+# Cobre da CHINA: contrato principal contínuo CU0 (沪铜主连) da Shanghai
+# Futures Exchange, cotado em CNY/t (tick 10 CNY). Sessão noturna 21:00-
+# 01:00 BJT (a cotação "do dia" entra com a data do pregão seguinte).
+# Cadeia (mesma infra validada do SC v6.8; cada fonte com cooldown):
+#   - Sina nf_CU0: realtime-ish; f[8]=último, f[27]=昨结算 (settlement
+#     anterior — base da variação do dia, convenção chinesa). O CU0 da
+#     Sina É o contrato principal real (conferido 22/09/2026: idêntico ao
+#     CU2611, flag is-main=1).
+#   - Eastmoney futsseapi 113_cum_qt (沪铜主连): p=último, j=昨结算
+#     (série EMENDADA — nível pode divergir ~0,4% do contrato cru; pct
+#     próprio consistente).
+#   - Eastmoney push2delay 113.cum: preço puro na escala f152 (o f170
+#     calcula vs limite -> NÃO vira pct).
+# Exibição em US$/lb (comparável com o COMEX HG=F da linha de cima):
+#   US$/lb = CNY/t ÷ USDCNY ÷ 2204.62262 — USDCNY só FRESH (fetch_fx,
+#   3 fontes, ≤ FX_MAX_AGE); sem câmbio fresco: CNY/t cru (flag 'cny'),
+#   nunca com taxa velha. Var % vem do CNY (idêntica em US$).
+EM_CU_FUTSSE_URL = ("https://futsseapi.eastmoney.com/static/"
+                    "113_cum_qt?token=58b2fa8f5c380ac3ee3494ecc1b6d8e6")
+EM_CU_SECID      = "113.cum"
+EM_CU_PUSH2_URL  = ("https://push2delay.eastmoney.com/api/qt/stock/get"
+                    "?secid={secid}&fields=f43,f152,f170"
+                    "&ut=fa5fd1943c7b386f172d6893dbfba10b")
+SINA_CU_CODE     = "nf_CU0"
+SINA_CU_KLINE_URL = ("https://stock2.finance.sina.com.cn/futures/api/"
+                     "jsonp.php/var%20_s=/InnerFuturesNewService"
+                     ".getDailyKLine?symbol=CU0")   # kline diário (reserva)
+CU_REFETCH       = 5 * 60             # intraday (sessão noturna): 1/5min
+CU_MAX_AGE       = 4 * 86400          # cache vence (4 dias; cobre fds)
+CU_CNY_LO        = 20000.0            # sanidade CNY/t (kline 2005: ~29k)
+CU_CNY_HI        = 300000.0           # teto folgado (hist ~161k em 2025)
+CU_PCT_LIMIT     = 15.0               # |pct| além do limite diário = dado ruim
+LB_PER_TON       = 2204.62262         # 1 tonelada métrica em libras
+
 # -------------- CONFIG · CRUDE URALS (Rússia, v7.0) --------------------------
 # Urals = blend de exportação da Rússia (FOB NW Europe/Primorsk). NÃO é
 # cotado em bolsa regular: Yahoo/FRED/Investing/TradingEconomics-comum não
@@ -652,7 +761,8 @@ BANK_TR = {
 #   base CN      : PAXG x USDCNY/oz (derivada, padrao do widget)
 #   barras       : proxy SGE Au99.99 (mesmo mercado; sem serie propria)
 #   gasolina     : FRED GASREGW (semanal); diesel tenta series FRED
-#   CDS 5Y       : Investing (SSR da pagina historical-data, ~1 mes)
+#   CDS 5Y       : Investing (API financialdata/historical, 1 ano; fallback
+#                  SSR da pagina historical-data, ~1 mes)
 # Sem serie remota (ou se ela falhar): usa o log local acumulado.
 HIST_CACHE_TTL = 600
 HIST_FILE      = os.path.join(STATE_DIR, "history.json")
@@ -663,6 +773,12 @@ EM_KLINE_FMT    = ("https://push2his.eastmoney.com/api/qt/stock/kline/get"
                    "&klt=101&fqt=0&beg={beg}&end={end}")
 INV_CDS_HIST_URL = ("https://www.investing.com/rates-bonds/"
                     "brazil-cds-5-years-usd-historical-data")
+# v7.1 — API REST do Investing p/ a serie completa do CDS (o SSR da pagina
+# historical-data so traz ~1 mes). pair_id do instrumento, extraido do HTML.
+INV_CDS_PAIR_ID  = "1116031"
+INV_CDS_API_FMT  = ("https://api.investing.com/api/financialdata/"
+                    "historical/{pair}?start-date={beg}&end-date={end}"
+                    "&time-frame=Daily&add-missing-rows=false")
 FRED_CSV_FMT    = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
 DIESEL_FRED_IDS = ("GASDESW", "DIESEL", "DD1NUS_DPG")
 
@@ -820,7 +936,42 @@ def _hist_fred(sids, days):
     raise RuntimeError("FRED sem serie (" + "; ".join(errs) + ")")
 
 
+def _hist_cds_api(days):
+    """Serie diaria do CDS via API REST do Investing (mesma do site, sem
+    chave): 1 ano completo (o SSR da pagina historical-data so traz ~1 mes).
+    Cabeçalho 'domain-id' obrigatorio; rows em ordem desc. (mais novo 1o)."""
+    end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    beg = (datetime.now(timezone.utc) - timedelta(days=int(days) + 5)
+           ).strftime("%Y-%m-%d")
+    url = INV_CDS_API_FMT.format(pair=INV_CDS_PAIR_ID, beg=beg, end=end)
+    d = _get_json(url, {"User-Agent": BROWSER_UA,
+                        "Accept": "application/json",
+                        "domain-id": "www"}, timeout=20)
+    rows = d.get("data") or []
+    pts = []
+    for r in rows:
+        try:
+            dt = str(r.get("rowDateTimestamp") or "")[:10]
+            raw = (r.get("last_closeRaw")
+                   if r.get("last_closeRaw") is not None
+                   else r.get("last_close"))
+            v = float(raw)
+            if v > 0 and len(dt) == 10:
+                pts.append((dt, v))
+        except Exception:
+            continue
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError("API sem serie")
+    days = int(days)
+    return pts[-days:] if len(pts) > days else pts, "Investing.com (API)"
+
+
 def _hist_cds(days):
+    try:
+        return _hist_cds_api(days)
+    except Exception as e:
+        log(f"hist cds: API Investing falhou ({e}); fallback SSR")
     html = _http_get(
         INV_CDS_HIST_URL,
         {"User-Agent": BROWSER_UA, "Accept-Language": "en-US,en;q=0.9"},
@@ -934,6 +1085,57 @@ def _hist_sc(days):
     return pts, f"SC diário (CNY÷{rate:.4f})"
 
 
+def _hist_cu_sina_kline():
+    """Série diária do contínuo CU0 no endpoint de kline de futuros da
+    própria Sina (infra independente do Eastmoney; desde 2005). JSONP
+    'var _s=([{d,o,h,l,c,v,...},...])' — exige Referer; c>0 e dentro da
+    faixa de sanidade. MESMA série emendada do kline EM 113.cum
+    (conferido 22/09/2026: fech. 22/09 = 111.320 nas duas)."""
+    raw = _http_get(SINA_CU_KLINE_URL,
+                    {"Referer": SINA_REFERER}).decode("utf-8", "replace")
+    s, e = raw.find("["), raw.rfind("]")
+    if s < 0 or e <= s:
+        raise ValueError("Sina kline CU0 sem JSONP")
+    rows = json.loads(raw[s:e + 1])
+    pts = []
+    for r in rows:
+        try:
+            c = float(r.get("c"))
+        except (TypeError, ValueError):
+            continue
+        if not _cu_ok(c):
+            continue
+        d = str(r.get("d") or "")
+        if len(d) == 10:
+            pts.append((d, c))
+    if len(pts) < 2:
+        raise ValueError("Sina kline CU0 sem série")
+    return pts
+
+
+def _hist_cu(days):
+    """Série p/ o gráfico do CU0: kline diário do contínuo (CNY/t) —
+    Eastmoney 113.cum -> Sina CU0 (fontes independentes) — convertida
+    ÷ USDCNY de AGORA ÷ 2204.62262 (lb/t; nota no rodapé do popup). Sem
+    câmbio fresco ou com as duas séries mortas: levanta (o fetch_history
+    cai pro log local, que acumula US$/lb desde a v7.3)."""
+    days = int(days)
+    fx = fetch_fx()
+    if not (fx.get("usdcny") and _fx_fresh(fx)):
+        raise ValueError("sem câmbio fresco p/ converter a série CU")
+    rate = float(fx["usdcny"])
+    try:
+        cny_pts, _s0 = _hist_em(EM_CU_SECID, days)
+    except Exception as e:
+        log(f"hist CU: push2his falhou ({e}); Sina kline")
+        cny_pts = _hist_cu_sina_kline()
+    pts = [(d, round(v / rate / LB_PER_TON, 4))
+           for d, v in (cny_pts[-days:] if len(cny_pts) > days else cny_pts)]
+    if len(pts) < 2:
+        raise ValueError(f"CU sem série ({len(pts)} ponto(s))")
+    return pts, f"SHFE CU0 diário (CNY÷{rate:.4f}÷lb)"
+
+
 def _hist_join(dates_vals, fx_by_date):
     items = sorted(fx_by_date.items())
     out = []
@@ -1016,6 +1218,14 @@ HIST_META = {
                    "fmt": lambda v: f"R$ {fmt_brl(v)}/g",
                    "yfmt": lambda v: fmt_brl(v).split(",")[0],
                    "ranges": (7, 30, 90, 180, 365)},
+    "copper":     {"title": "Cobre · COMEX HG=F (US$/lb)",
+                   "fmt": lambda v: f"US$ {fmt_usd(v)}",
+                   "yfmt": lambda v: f"{v:.2f}",
+                   "ranges": (7, 30, 90, 180, 365)},
+    "cu_shfe":    {"title": "Cobre · SHFE CU0 (US$/lb)",
+                   "fmt": lambda v: f"US$ {fmt_usd(v)}",
+                   "yfmt": lambda v: f"{v:.2f}",
+                   "ranges": (7, 30, 90, 180, 365)},
     "gc_f":       {"title": "COMEX · Futuro GC=F (USD/oz)",
                    "fmt": lambda v: f"US$ {fmt_usd(v)}",
                    "yfmt": lambda v: f"{v:,.0f}",
@@ -1067,7 +1277,7 @@ HIST_META = {
     "cds_5y":     {"title": "Brasil · CDS 5 anos (bps)",
                    "fmt": lambda v: f"{fmt_bps(v)} bps",
                    "yfmt": lambda v: f"{v:.0f}",
-                   "ranges": (7, 30)},
+                   "ranges": (7, 30, 90, 180, 365)},
     "urea_me":    {"title": "Uréia · Spot intl. (US$/t)",
                    "fmt": lambda v: f"US$ {fmt_usd(v)}/t",
                    "yfmt": lambda v: f"{v:,.0f}",
@@ -1105,6 +1315,10 @@ def fetch_history(key, days=30, hist_log=None):
                 raise ValueError("juncao PAXG x USDBRL vazia")
             pts = joined[-days:] if len(joined) > days else joined
             src = f"PAXG x USDBRL ({s1}; {s2})"
+        elif base == "copper":
+            pts, src = _hist_yahoo("HG=F", days)
+        elif base == "cu_shfe":
+            pts, src = _hist_cu(days)
         elif base == "gc_f":
             pts, src = _hist_yahoo("GC=F", days)
         elif base == "ho_f":
@@ -1778,6 +1992,194 @@ def fetch_ho_future():
             errs.append(f"{name}: {e}")
             _src_cooldown(name, iv, str(e))
     raise RuntimeError("diesel NYMEX sem fonte viva (" + "; ".join(errs) + ")")
+
+# ------------------- FETCH · COBRE COMEX HG=F (v7.2) -------------------------
+def fetch_hg_yahoo():
+    """Futuro COMEX cobre contínuo (HG=F) pelo chart do Yahoo — fonte
+    principal, mesmo pipeline do GC=F/HO=F/BZ=F."""
+    return _fetch_yahoo_future("HG=F", YAHOO_HG_URL)
+
+def fetch_hg_yahoo_q2():
+    """HG=F host reserva."""
+    return _fetch_yahoo_future("HG=F", YAHOO_HG_URL_Q2)
+
+def fetch_hg_fxempire():
+    """Fallback do cobre: SSR da página /commodities/copper do FXEmpire.
+    Blob react-query (mesmo mecanismo do HO/Brent) com o marker único
+    '"vendorSymbol":"HG"'; o quote vem DIRETO no data (last/change/
+    percentChange/previousClose/high/low/lastUpdate/futuresMonth/
+    openInterest). Diferente do HO: AQUI usa-se o top-level — ele espelha
+    o contrato mais líquido (dez/26, OI 171.866 vs 1.363 do front set/26,
+    conferido ao vivo), que é o benchmark que o TE também segue."""
+    html = _http_get(FXE_COPPER_URL, {"User-Agent": BROWSER_UA},
+                     timeout=25).decode("utf-8", "replace")
+    q = _fxe_segment(html, '"vendorSymbol":"HG"')
+    price = _to_float(q.get("last"))
+    if not price or price < HG_USD_LO or price > HG_USD_HI:
+        raise ValueError("FXEmpire sem preço válido")
+    pct = _to_float(q.get("percentChange"))
+    prev = _to_float(q.get("previousClose"))
+    if pct is None and prev and prev > 0:
+        pct = (price / prev - 1.0) * 100.0
+    return {"price": price,
+            "pct": pct,
+            "day_chg": _to_float(q.get("change")),
+            "prev_close": prev,
+            "high": _to_float(q.get("high")),
+            "low": _to_float(q.get("low")),
+            "oi": _to_float(q.get("openInterest")),
+            "month": q.get("futuresMonth") or "",
+            "vendor_ts": q.get("lastUpdate") or "",
+            "name": q.get("name") or "",
+            "src": "FXEmpire/Oanda", "ts": time.time()}
+
+def fetch_hg_te():
+    """Fallback 2 do cobre: scrape do SSR do Trading Economics (referência
+    CFD do contrato principal; mesmo scraper do HO=F/ureia/sulfur)."""
+    return {**_fetch_te_commodity(TE_COPPER_URL, HG_USD_HI), "ts": time.time()}
+
+def fetch_copper():
+    """Futuro COMEX cobre (HG=F), US$/lb. Cadeia (v7.2): Yahoo-q1 ->
+    Yahoo-q2 -> FXEmpire -> TradingEconomics -> cache (a camada de cima
+    mantém). Todas sem chave; cada fonte com cooldown próprio: fallback
+    que salva NÃO anistia a primária morta; 429 conta como falha dupla.
+    Falha isolada das demais seções."""
+    cands = (
+        ("Yahoo-HG-q1", fetch_hg_yahoo, HG_REFETCH),
+        ("Yahoo-HG-q2", fetch_hg_yahoo_q2, HG_REFETCH),
+        ("FXEmpire-HG", fetch_hg_fxempire, HG_REFETCH),
+        ("TE-HG", fetch_hg_te, HG_REFETCH),
+    )
+    errs = []
+    for name, fn, iv in cands:
+        if not _src_due(name):
+            errs.append(f"{name}: em cooldown")
+            continue
+        try:
+            r = fn()
+            _src_clear(name)
+            return r
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            _src_cooldown(name, iv, str(e))
+    raise RuntimeError("cobre COMEX sem fonte viva (" + "; ".join(errs) + ")")
+
+# ------------------- FETCH · COBRE SHFE CU0 (China, v7.3) --------------------
+# Cobre 沪铜 (SHFE, CNY/t). Cadeia espelhada no SC (v6.8): Sina ->
+# futsseapi -> push2delay -> cache; a conversão US$/lb acontece no
+# fetch_cu_shfe com o câmbio do ciclo (regra do enxofre/SC: nada de
+# USDCNY velho). Cada fonte com cooldown próprio.
+def _cu_ok(v):
+    return bool(v and CU_CNY_LO < float(v) < CU_CNY_HI)
+
+def fetch_cu_sina():
+    """Contínuo CU0 da SHFE pela Sina (nf_CU0, mesmo pipeline do nf_SC0).
+    f[8]=último, f[27]=昨结算 (settlement anterior). pct vs settlement =
+    convenção chinesa; sem settlement parseável (ou pct fora do limite
+    diário) o registro volta SEM pct — nunca pct errado."""
+    txt = _http_get(SINA_URL_FMT.format(codes=SINA_CU_CODE),
+                    {"Referer": SINA_REFERER}).decode("gbk", "replace")
+    m = re.search(r'hq_str_' + SINA_CU_CODE + r'="([^"]*)"', txt)
+    if not m:
+        raise ValueError("resposta Sina nf_CU0 sem payload")
+    f = m.group(1).split(",")
+    last = _to_float(f[8] if len(f) > 8 else None)
+    if not _cu_ok(last):
+        raise ValueError("Sina nf_CU0 sem preço válido")
+    prev = _to_float(f[27] if len(f) > 27 else None)
+    pct = None
+    if _cu_ok(prev) and abs(last / prev - 1.0) * 100.0 <= CU_PCT_LIMIT:
+        pct = (last / prev - 1.0) * 100.0
+    return {"price": last, "pct": pct,
+            "prev_close": (prev if _cu_ok(prev) else None),
+            "src": "Sina nf_CU0", "ts": time.time()}
+
+def fetch_cu_futsse():
+    """沪铜主连 (cum) na API interna do Eastmoney (futsseapi). p=último,
+    j=昨结算 (settlement) — mesma convenção da Sina. Série EMENDADA: o
+    nível pode divergir ~0,4% do contrato cru (pct interno consistente)."""
+    d = _get_json(EM_CU_FUTSSE_URL).get("qt") or {}
+    last, prev = _to_float(d.get("p")), _to_float(d.get("j"))
+    if not _cu_ok(last):
+        raise ValueError("futsseapi cum sem preço válido")
+    pct = None
+    if _cu_ok(prev) and abs(last / prev - 1.0) * 100.0 <= CU_PCT_LIMIT:
+        pct = (last / prev - 1.0) * 100.0
+    return {"price": last, "pct": pct, "prev_close": (prev if _cu_ok(prev) else None),
+            "name": d.get("name") or "", "src": "Eastmoney (futsseapi)",
+            "ts": time.time()}
+
+def fetch_cu_push2():
+    """Último degrau Eastmoney: push2delay 113.cum. O f43 vem na escala
+    f152 (casas decimais do instrumento — RELATORIO: preço = f43/10^f152;
+    SHFE cum tem 2 casas -> f43/100). O host é instável (502 intermitente)
+    e o f170 calcula vs limite -> degrau de preço puro: pct sempre None.
+    A escala é resolvida por f152 com varredura de faixa como reserva
+    (divisor único que caiba em CU_CNY_LO..HI)."""
+    url = EM_CU_PUSH2_URL.format(secid=EM_CU_SECID)
+    data = _get_json(url).get("data") or {}
+    f43 = _to_float(data.get("f43"))
+    if f43 is None:
+        raise ValueError("push2delay cum sem f43")
+    f152 = _to_float(data.get("f152"))
+    divs = ([10 ** int(f152)] if (f152 is not None and f152 >= 0)
+            else []) + [100, 10, 1000, 1, 10000]
+    for div in divs:
+        price = f43 / div
+        if _cu_ok(price):
+            return {"price": price, "pct": None, "prev_close": None,
+                    "src": "Eastmoney (push2delay)", "ts": time.time()}
+    raise ValueError("push2delay cum com preço fora de faixa")
+
+def _cu_usd(price_cny, fx):
+    """CNY/t -> US$/lb com o câmbio do ciclo. Exige câmbio PRESENTE e com
+    até FX_MAX_AGE (mesma regra da derivação do BRL/SC/enxofre). Sem
+    câmbio fresco devolve (None, None) — a UI mostra o CNY/t cru."""
+    if not (fx and fx.get("usdcny") and _fx_fresh(fx)):
+        return None, None
+    rate = float(fx["usdcny"])
+    if rate <= 0:
+        return None, None
+    usd_t = float(price_cny) / rate
+    if not (CU_CNY_LO / rate < usd_t < CU_CNY_HI / rate):
+        return None, None
+    return usd_t / LB_PER_TON, rate
+
+def fetch_cu_shfe(fx):
+    """Cobre SHFE CU0 (China), exibição US$/lb. Cadeia (v7.3): Sina ->
+    Eastmoney futsseapi -> Eastmoney push2delay -> cache (a camada de
+    cima mantém). Cada fonte com cooldown próprio; o primeiro degrau vivo
+    converte com o câmbio do ciclo (fx) e preserva o CNY original
+    ('cny_price', 'usdcny_used'). Sem câmbio fresco o registro volta em
+    CNY cru (flag 'cny') — nunca com taxa velha. Falha isolada."""
+    errs = []
+    for name, fn, iv in (("Sina-CU", fetch_cu_sina, CU_REFETCH),
+                         ("Futsse-CU", fetch_cu_futsse, CU_REFETCH),
+                         ("EM-Push-CU", fetch_cu_push2, CU_REFETCH)):
+        if not _src_due(name):
+            errs.append(f"{name}: em cooldown")
+            continue
+        try:
+            r = fn()
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            _src_cooldown(name, iv, str(e))
+            continue
+        p_cny = r.get("price")
+        if not _cu_ok(p_cny):
+            errs.append(f"{name}: valor CNY fora de faixa ({p_cny})")
+            _src_cooldown(name, iv, "valor fora de faixa")
+            continue
+        _src_clear(name)
+        usd, rate = _cu_usd(p_cny, fx)
+        if usd is None:
+            r["cny"] = True                  # câmbio velho/ausente: cru
+        else:
+            r["cny_price"] = p_cny
+            r["price"] = round(usd, 4)
+            r["usdcny_used"] = rate
+        return r
+    raise RuntimeError("cobre SHFE sem fonte viva (" + "; ".join(errs) + ")")
 
 # ------------------- FETCH · CRUDE URALS (Rússia, v7.0) ----------------------
 def _urals_delay(txt):
@@ -3259,6 +3661,15 @@ class GoldWidget:
                               font=("DejaVu Sans", 8))
         self.l_sub.pack(anchor="w", padx=12, pady=(0, 8))
 
+        # --------------- seção COBRE (COMEX HG=F + SHFE CU0, v7.3) --------
+        self.copper_frame = tk.Frame(self.body, bg=BG)
+        self.copper_frame.pack(anchor="w", padx=12, fill="x")
+        self._copper_sig = None
+        self._copper_refs = []
+        self.l_copper_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
+                                     font=("DejaVu Sans", 7))
+        self.l_copper_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
         # REMOVIDO a pedido do usuário (2026-09-17): seção COMEX · FUTURO (GC=F)
         # REMOVIDO a pedido do usuário (2026-09-17): seção CHINA
         # (BOLSAS SGE/SHFE + REFERÊNCIA Base China Gold + BARRAS DE BANCO)
@@ -3352,6 +3763,8 @@ class GoldWidget:
             for _lbl, _hk in (
                     ("Ouro spot USD", "spot_usd"),
                     ("Ouro spot BRL", "spot_brl"),
+                    ("Cobre (COMEX HG=F)", "copper"),
+                    ("Cobre SHFE (China)", "cu_shfe"),
                     ("Gasolina EUA", "fuel_gas"),
                     ("Diesel EUA", "fuel_diesel"),
                     ("CDS Brasil 5 anos", "cds_5y"),
@@ -3387,6 +3800,7 @@ class GoldWidget:
                          (self.l_brl_var, "spot_brl"),
                          (self.l_brl_var_week, "spot_brl"),
                          (self.l_sub, None),
+                         (self.l_copper_sub, None),
                          (self.l_us_sub, None), (self.l_cds_sub, None),
                          (self.l_ho_sub, None), (self.l_brent_sub, None),
                          (self.l_sc_sub, None),
@@ -3828,6 +4242,40 @@ class GoldWidget:
         self.last.pop("china", None)
         self.last.pop("gc_fut", None)
 
+        # ---- Cobre · COMEX HG=F (v7.2): intraday, refetch no máx.
+        #      1/5min; cadeia Yahoo -> FXEmpire -> TradingEconomics ->
+        #      cache; falha isolada das demais seções ----
+        cu = self.last.get("copper")
+        if _due("copper", cu, HG_REFETCH):
+            try:
+                self.last["copper"] = fetch_copper()
+                _cooldown_clear("copper")
+            except Exception as e:
+                log(f"cobre COMEX indisponível ({e}); mantendo cache")
+                _cooldown("copper", HG_REFETCH, str(e))
+        cu = self.last.get("copper")
+        if cu and time.time() - cu.get("ts", 0) > HG_MAX_AGE:
+            self.last.pop("copper", None)
+            log("cobre COMEX: cache >4 dias sem fonte; removido")
+
+        # ---- Cobre · SHFE CU0 (China, v7.3): intraday (sessão noturna
+        #      21h-1h BJT), refetch no máx. 1/5min; cadeia Sina ->
+        #      futsseapi -> push2delay -> cache; US$/lb = CNY/t ÷ USDCNY
+        #      ÷ 2204.62 (só câmbio fresco; sem câmbio: CNY/t cru);
+        #      falha isolada das demais seções ----
+        cuc = self.last.get("cu_shfe")
+        if _due("cu_shfe", cuc, CU_REFETCH):
+            try:
+                self.last["cu_shfe"] = fetch_cu_shfe(fx)
+                _cooldown_clear("cu_shfe")
+            except Exception as e:
+                log(f"cobre SHFE indisponível ({e}); mantendo cache")
+                _cooldown("cu_shfe", CU_REFETCH, str(e))
+        cuc = self.last.get("cu_shfe")
+        if cuc and time.time() - cuc.get("ts", 0) > CU_MAX_AGE:
+            self.last.pop("cu_shfe", None)
+            log("cobre SHFE: cache >4 dias sem fonte; removido")
+
         # ---- EUA · combustível (AAA, diário): falha isolada + refetch 1/h ----
         uf = self.last.get("us_fuel")
         if _due("fuel", uf, FUEL_REFETCH):
@@ -4054,6 +4502,12 @@ class GoldWidget:
                 log_hist_point(_H, "fuel_gas", _uf["gas"])
             if _uf.get("diesel"):
                 log_hist_point(_H, "fuel_diesel", _uf["diesel"])
+            _cu = _L.get("copper") or {}
+            if _cu.get("price"):
+                log_hist_point(_H, "copper", _cu["price"])
+            _cuc = _L.get("cu_shfe") or {}
+            if _cuc.get("price") and _cuc.get("usdcny_used"):
+                log_hist_point(_H, "cu_shfe", _cuc["price"])
             _cds = _L.get("cds_br") or {}
             if _cds.get("bps"):
                 log_hist_point(_H, "cds_5y", _cds["bps"])
@@ -4141,6 +4595,10 @@ class GoldWidget:
         self.last.pop("china", None)
         self.last.pop("gc_fut", None)
 
+        # seção COBRE · COMEX HG=F (v7.2)
+        self._render_copper()
+        self._render_copper_sub()
+
         # seção EUA · combustível (v5.4 local)
         self._render_us()
         self._render_us_sub()
@@ -4213,6 +4671,139 @@ class GoldWidget:
 
     def _render_china_sub(self):
         return
+
+    # ----------------- exibição · seção COBRE (v7.2/v7.3) ------------------
+    # 2 linhas na MESMA seção: COMEX HG=F (US$/lb) e SHFE CU0 (US$/lb,
+    # China) — unidades idênticas p/ comparar o prêmio SHFE de graça.
+    def _copper_label(self, rec=None):
+        """Rótulo da linha COMEX: 'HG=F · COMEX · dez/26' (+ ' · (cache)'
+        após FUT_STALE). Mês vem do futuresMonth da FXEmpire ('Dec 2026')
+        ou do shortName do Yahoo (ex.: 'Copper Dec 26'); sem mês, fica só
+        'HG=F · COMEX'."""
+        rec = rec or {}
+        nome = "HG=F · COMEX"
+        month = rec.get("month") or ""
+        if not month:
+            parts = (rec.get("name") or "").split()
+            if len(parts) >= 2 and parts[-2] in MONTH_PT:
+                month = f"{parts[-2]} {parts[-1]}"
+        pm = month.split()
+        if len(pm) == 2 and pm[0] in MONTH_PT:
+            yr = pm[1][-2:] if len(pm[1]) == 4 else pm[1]
+            nome += f" · {MONTH_PT[pm[0]]}/{yr}"
+        elif month:
+            nome += f" · {month}"
+        if rec.get("ts") and time.time() - rec["ts"] > FUT_STALE:
+            nome += " · (cache)"
+        return nome
+
+    def _cu_label(self, rec=None):
+        """Rótulo da linha SHFE: 'CU0 · SHFE' (+ ' · (cache)' após
+        FUT_STALE) — mesmo padrão do rótulo do SC (v6.8)."""
+        rec = rec or {}
+        nome = "CU0 · SHFE"
+        if rec.get("ts") and time.time() - rec["ts"] > FUT_STALE:
+            nome += " · (cache)"
+        return nome
+
+    def _copper_rows(self):
+        hg = self.last.get("copper") or {}
+        cu = self.last.get("cu_shfe") or {}
+        rows = []
+        if hg.get("price") or cu.get("price"):
+            rows.append((("h", "── COBRE ──"), None, None))
+        if hg.get("price"):
+            rows.append((("r", self._copper_label(hg)),
+                         f"US$ {fmt_usd(hg['price'])}/lb",
+                         hg.get("pct"), "copper"))
+        if cu.get("price"):
+            if cu.get("cny"):
+                pre_str = f"CNY {cu['price']:,.0f}/t"
+            else:
+                pre_str = f"US$ {fmt_usd(cu['price'])}/lb"
+            rows.append((("r", self._cu_label(cu)),
+                         pre_str,
+                         cu.get("pct"), "cu_shfe"))
+        return rows
+
+    def _render_copper(self):
+        rows = self._copper_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._copper_sig:
+            for w in self.copper_frame.winfo_children():
+                w.destroy()
+            self._copper_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.copper_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._copper_refs.append(("h", lab))
+                else:
+                    ln = tk.Label(self.copper_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.copper_frame, text="—", bg=BG,
+                                  fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.copper_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, r[3])
+                    self._copper_refs.append(("r", ln, lp, lv))
+                grid += 1
+            self.copper_frame.columnconfigure(0, weight=1)
+            self._copper_sig = sig
+
+        for ref, r in zip(self._copper_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, pct = r[1], r[2]
+            lp.config(text=price_str, fg=TXT_USD)
+            if pct is None:
+                lv.config(text="")
+            else:
+                lv.config(text=fmt_pct(pct),
+                          fg=UP_COLOR if pct >= 0 else DOWN_COLOR)
+
+    def _render_copper_sub(self):
+        hg = self.last.get("copper") or {}
+        cu = self.last.get("cu_shfe") or {}
+        hparts, cparts = [], []
+        if hg.get("price"):
+            if hg.get("high") is not None and hg.get("low") is not None:
+                hparts.append(f"HG dia {hg['low']:.2f}-{hg['high']:.2f}")
+            if hg.get("oi"):
+                hparts.append(f"OI {hg['oi']:,.0f}")
+            if hg.get("vendor_ts"):
+                hparts.append(str(hg["vendor_ts"]).replace("T", " ")[:16] + "Z")
+        if hg.get("ts"):
+            hparts.append(f"{hg.get('src', '?')} há "
+                          f"{max(0, int(time.time() - hg['ts']))}s")
+            if time.time() - hg["ts"] > HG_REFETCH * 2:
+                hparts.append("(cache)")
+        if cu.get("price"):
+            if cu.get("cny"):
+                cparts.append("sem câmbio fresco: CU0 cru em CNY")
+            elif cu.get("cny_price"):
+                cparts.append(f"CU0 CNY {cu['cny_price']:,.0f}/t")
+            if cu.get("usdcny_used"):
+                cparts.append(f"USDCNY {cu['usdcny_used']:.4f}")
+            cparts.append(f"{cu.get('src', '?')} há "
+                          f"{max(0, int(time.time() - cu.get('ts', 0)))}s")
+            if time.time() - cu.get("ts", 0) > CU_REFETCH * 2:
+                cparts.append("(cache)")
+        groups = [" · ".join(g) for g in (hparts, cparts) if g]
+        self.l_copper_sub.config(text="   |   ".join(groups), fg=TXT_DIM)
 
     # ----------------- exibição · seção EUA · COMBUSTÍVEL (local) ---------
     def _us_rows(self):
@@ -5024,6 +5615,41 @@ def dump():
     print("Sina/China/COMEX GC=F: REMOVIDOS a pedido do usuário (sem busca)")
 
     try:
+        cu = fetch_copper()
+        last["copper"] = cu
+        extra = []
+        if cu.get("pct") is not None:
+            extra.append(f"{cu['pct']:+.2f}%")
+        if cu.get("day_chg") is not None:
+            extra.append(f"Δ {cu['day_chg']:+.4f}")
+        if cu.get("high") is not None and cu.get("low") is not None:
+            extra.append(f"dia {cu['low']:.2f}-{cu['high']:.2f}")
+        if cu.get("oi"):
+            extra.append(f"OI {cu['oi']:,.0f}")
+        if cu.get("month"):
+            extra.append(f"contrato {cu['month']}")
+        print(f"COBRE COMEX [{cu['src']}]: {cu['price']:,.2f} US$/lb "
+              f"({', '.join(extra) if extra else '—'})")
+    except Exception as e:
+        print(f"COBRE COMEX: FALHOU ({e})")
+
+    try:
+        cuc = fetch_cu_shfe(last.get("fx"))
+        last["cu_shfe"] = cuc
+        extra = []
+        if cuc.get("pct") is not None:
+            extra.append(f"{cuc['pct']:+.2f}%")
+        if cuc.get("cny_price"):
+            extra.append(f"cru CNY {cuc['cny_price']:,.0f}/t")
+        if cuc.get("usdcny_used"):
+            extra.append(f"USDCNY {cuc['usdcny_used']:.4f}")
+        unit = "CNY/t (cru)" if cuc.get("cny") else "US$/lb"
+        print(f"COBRE SHFE CU0 [{cuc['src']}]: {cuc['price']:,.2f} {unit} "
+              f"({', '.join(extra) if extra else '—'})")
+    except Exception as e:
+        print(f"COBRE SHFE CU0: FALHOU ({e})")
+
+    try:
         f = fetch_us_fuel()
         last["us_fuel"] = f
         precos = []
@@ -5198,9 +5824,10 @@ def main():
         print("Sem display gráfico (DISPLAY não definido).", file=sys.stderr)
         return 1
 
-    log("iniciando widget (v7.1: janela redimensionável — alças invisíveis"
-        " nas 4 bordas/4 cantos + rolagem oculta (wheel, sem scrollbar) +"
-        " tamanho persistente no cache)")
+    log("iniciando widget (v7.3: seção COBRE com COMEX HG=F + SHFE CU0 da"
+        " China — cadeia Sina -> Eastmoney futsseapi -> push2delay ->"
+        " cache, US$/lb com USDCNY fresco; mantém v7.1: janela"
+        " redimensionável + rolagem oculta + tamanho persistente)")
     root = tk.Tk()
     GoldWidget(root)
     root.mainloop()
