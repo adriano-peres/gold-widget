@@ -3,12 +3,13 @@
 ![Python](https://img.shields.io/badge/python-3.x-3776AB?logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/plataforma-Linux%20%C2%B7%20X11-FCC624?logo=linux&logoColor=black)
 ![Dependências](https://img.shields.io/badge/depend%C3%AAncias-somente%20stdlib-00A86B)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-v7.3-c9a227)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-v8.2-c9a227)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20pessoal-lightgrey)
 
 Widget de desktop em **Python puro** (tkinter) que vive na sua área de trabalho e mostra, em tempo quase real e **sem nenhuma chave de API**:
 
 - **Ouro spot** em USD/onça e R$/grama;
+- **Câmbio USD/BRL** — só o valor, mid 4 casas ("US$ 1 = R$ 5,1526"), com cadeia de **10 fontes**;
 - **Cobre** — COMEX `HG=F` (benchmark global) e SHFE `CU0` (China), ambos em US$/lb para comparar o prêmio chinês de graça;
 - **Combustível EUA** — média nacional **diária** de varejo da bomba (gasolina regular e diesel, AAA);
 - **Risco soberano do Brasil** — CDS 5 anos em bps + probabilidade de default implícita;
@@ -48,6 +49,9 @@ OURO · SPOT
 US$ 4,285.65   ▲ 0.42% no dia   ▲ 1.87% na semana
 R$ 885,32/g    ▼ 0.11% no dia   ▲ 1.52% na semana
 bid 4,285.1 · ask 4,286.2 · há 34s
+
+CÂMBIO · USD/BRL
+US$ 1 = R$ 5,1526
 
 ── COBRE ──
 HG=F · COMEX · dez/26     US$ 6.76/lb        ▼ 1.08%
@@ -91,7 +95,8 @@ Cada seção tem um rodapé próprio com a fonte usada, frescor do dado ("há Ns
 ## Recursos
 
 - Spot **USD** (`goldprice.dev` → `goldprice.org`) e **BRL** derivado com câmbio fresco
-- Câmbio USD/BRL e CNY/BRL com 3 fontes (`awesomeapi` → `currency-api`/jsDelivr → `open.er-api.com`)
+- **Câmbio USD/BRL visível (v8.2)**: só o valor (mid, 4 casas pt-BR), **10 fontes** com queda automática em cascata — awesomeapi → Yahoo `USDBRL=X` → TradingEconomics → floatrates → currency-api (pages.dev **→** jsDelivr) → open.er-api → frankfurter.dev → BCB SGS → Olinda PTAX → BCB SOAP → cache 24h
+- Câmbio interno USD/BRL e CNY/BRL das derivações (`fetch_fx`, intacto) com 3 fontes (`awesomeapi` → `currency-api`/jsDelivr → `open.er-api.com`)
 - Baseline diário/semanal via **PAXG**: Binance → OKX (fora da quota da API principal)
 - **Cobre COMEX HG=F** (v7.2): intraday US$/lb — Yahoo → FXEmpire (CFD Oanda) → TradingEconomics → cache 4d
 - **Cobre SHFE CU0** (v7.3): o cobre da China em US$/lb = CNY/t ÷ USDCNY ÷ 2204,62 — Sina → Eastmoney futsseapi → Eastmoney push2delay → cache 4d; sem câmbio fresco mostra CNY/t cru (nunca com taxa velha)
@@ -116,7 +121,8 @@ Toda fonte tem plano B (e C, D...). Se uma responde erro **ou responde sem dado*
 |---|---|---|---|
 | **Ouro spot USD** | `goldprice.dev` → `goldprice.org` | 90 s | — |
 | **Ouro spot BRL** | `goldprice.dev` → derivado USD × USDBRL → `goldprice.org/BRL` | 90 s | — |
-| **Câmbio USD/BRL, CNY/BRL** | awesomeapi → currency-api (jsDelivr) → open.er-api.com | 90 s | — |
+| **Câmbio USD/BRL (campo visível, v8.2)** | awesomeapi (bid/ask) → Yahoo `USDBRL=X` (chart q2→q1) → TradingEconomics `/brazil/currency` (scrape `market_last`) → floatrates → currency-api (**pages.dev** → jsDelivr; reserva `1/brl.usd`) → open.er-api → frankfurter.dev → BCB SGS (10813 compra + 1 venda → mid) → Olinda PTAX (Dia → Período) → BCB SOAP www3 → cache 24h | 90 s | 24 h |
+| **Câmbio USD/BRL, CNY/BRL (derivações)** | awesomeapi → currency-api (jsDelivr) → open.er-api.com | 90 s | — |
 | **Baseline dia/semana (PAXG)** | Binance klines → OKX candles 1Dutc | 90 s | — |
 | **Cobre COMEX HG=F** (US$/lb) | Yahoo `HG=F` (chart, q1→q2 em 429) → FXEmpire `/commodities/copper` (CFD Oanda) → TradingEconomics (scrape) → cache 4d | 5 min | 4 dias |
 | **Cobre SHFE CU0** (US$/lb) | Sina `nf_CU0` (contrato principal real) → Eastmoney futsseapi `113_cum_qt` (主连 emendado) → Eastmoney push2delay `113.cum` → cache 4d | 5 min | 4 dias |
@@ -216,6 +222,7 @@ Por padrão o widget vive numa camada especial: **acima dos ícones do desktop e
 
 ```text
 $ python3 gold_widget.py --dump
+USD/BRL [awesomeapi]: 5.1722 (mid)
 FX [awesomeapi]: USDBRL 5.1526 · CNYBRL 0.7614 · USDCNY 6.7674
 goldprice.dev XAU-USD-SPOT: 4,285.65 (bid None · ask None)
 goldprice.dev XAU-BRL-SPOT: 22,150.95 (bid None · ask None)
@@ -255,6 +262,7 @@ Constantes no topo do `gold_widget.py`:
 | `POLL_SECONDS` | `90` | intervalo entre buscas (respeite a quota da API) |
 | `NET_TIMEOUT` | `8` | timeout de rede em segundos |
 | `FX_MAX_AGE` | `15 min` | câmbio mais velho que isso não é usado p/ derivação |
+| `USDBRL_REFETCH` / `USDBRL_MAX_AGE` | `90 s` / `24 h` | cadência e expiração do campo visível USD/BRL (v8.2) |
 | `FUT_STALE` | `10 min` | idade a partir da qual o rótulo ganha "(cache)" |
 | `HG_REFETCH` / `HG_MAX_AGE` | `5 min` / `4 dias` | cadência e expiração do cobre COMEX HG=F |
 | `CU_REFETCH` / `CU_MAX_AGE` | `5 min` / `4 dias` | cadência e expiração do cobre SHFE CU0 |
@@ -305,6 +313,7 @@ A solução: o widget cria-se como tipo `desktop` e depois envia ao WM um *clien
 | **v7.1** | **Janela redimensionável** com alças invisíveis nas 4 bordas/4 cantos (resize direcional, mínimo 200×150), **rolagem oculta** (roda do mouse, sem barra na UI; texto não escala) e **tamanho persistente** no cache |
 | **v7.2** | **Seção COBRE · COMEX (HG=F)** logo abaixo do spot: intraday US$/lb com cadeia Yahoo → FXEmpire (CFD Oanda) → TradingEconomics → cache 4d, gráfico 7D–1A no clique |
 | **v7.3** | **Linha CU0 · SHFE (cobre da China)** na seção COBRE: contrato principal contínuo da SHFE em US$/lb (= CNY/t ÷ USDCNY ÷ 2204,62, câmbio fresco obrigatório), cadeia Sina → futsseapi → push2delay → cache 4d, variação vs settlement (convenção chinesa) |
+| **v8.2** | **Seção CÂMBIO · USD/BRL** logo abaixo do OURO · SPOT: só o valor (mid 4 casas pt-BR, `US$ 1 = R$ 5,1526`), `fetch_usdbrl()` separado do `fetch_fx` (derivações intactas); cadeia de **10 degraus** com queda automática em cascata (falha → próximo; próximo falhou → outro): awesomeapi → Yahoo `USDBRL=X` → TradingEconomics → floatrates → currency-api (**pages.dev** 1º — o jsDelivr `@latest` serve cotação velha) → open.er-api → frankfurter.dev → BCB SGS → Olinda PTAX → BCB SOAP; mid = (compra+venda)/2 ou (bid+ask)/2; cooldown por fonte; cache 24h; também no `--dump` |
 
 ## Licença
 

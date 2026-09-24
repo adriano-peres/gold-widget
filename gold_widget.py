@@ -384,6 +384,34 @@ v5.8:
         diário 113.cum (== Sina kline CU0, conferido: fech. 22/09
         111.320 nas duas) ÷ USDCNY ÷ lb, fallback no log local (US$/lb
         desde a v7.3). Falha isolada das demais seções.
+  v8.2 (ESTA VERSAO, a pedido do usuário):
+    * NOVO — seção "CÂMBIO · USD/BRL": linha visível com SÓ o valor do
+      dólar em reais ("US$ 1 = R$ 5,1526", mid, 4 decimais pt-BR), estilo
+      do spot do ouro. Posição: logo abaixo do OURO · SPOT. Não entra nas
+      derivações (fetch_fx continua como estava, intacto).
+    * fetch_usdbrl() SEPARADO com cadeia de 10 degraus — cada falha cai
+      AUTOMATICAMENTE no próximo degrau, e se o próximo falhar cai em
+      outro, até acabar; no fim cache 24h e senão "—". Mid = (compra+
+      venda)/2 ou (bid+ask)/2; fonte de 1 número usa o número direto.
+      Ordem validada ao vivo 24/09/2026 (intraday primeiro — o BCB/PTAX é
+      fechamento DIÁRIO e fica ~0,5% atrás do intraday em horário de
+      pregão; oficial entra como fallback):
+          1. awesomeapi (bid/ask; /json/last/USD-BRL, reserva /json/all)
+          2. Yahoo USDBRL=X (chart q2->q1; regularMarketPrice)
+          3. TradingEconomics /brazil/currency (scrape market_last)
+          4. floatrates (usd.json -> brl.rate)
+          5. currency-api (pages.dev FRESCO -> jsDelivr, que fica preso
+             na versão do pacote e serve cotação velha; reserva
+             1/brl.usd)
+          6. open.er-api.com (rates.BRL)
+          7. frankfurter.dev (rates.BRL; .app redireciona p/ .dev)
+          8. BCB SGS (10813 compra + 1 venda -> mid; api.bcb.gov.br)
+          9. Olinda PTAX (CotacaoDolarDia -> CotacaoDolarPeriodo ->
+             compra/venda -> mid)
+         10. BCB SOAP www3 (getUltimoValorVO séries 1+10813 -> mid)
+      Cooldown POR FONTE (padrão v6.4): fallback não anistia a fonte
+      morta. Refetch 90s. Também sai no --dump. Falha isolada das demais
+      seções.
  Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
  """
 
@@ -426,6 +454,37 @@ FX_JSD_HIST   = ("https://cdn.jsdelivr.net/npm/@fawazahmed0/"
                  "currency-api@{date}/v1/currencies/usd.json")
 PAXG_KLINES_OKX = ("https://www.okx.com/api/v5/market/candles"
                    "?instId=PAXG-USDT&bar=1Dutc&limit=8")
+
+# ------------- CONFIG · USD/BRL (campo visível, v8.2) ---------------------
+# Cadeia do campo "CÂMBIO · USD/BRL" (só o valor, mid). 10 degraus, cada
+# falha cai no próximo e se o próximo falhar cai em outro. Intraday antes
+# do BCB oficial (PTAX = fechamento diário, ~0,5% atrás do intraday em
+# horário de pregão). Fontes gratuitas sem chave, validadas 24/09/2026.
+USDBRL_REFETCH = 90                             # igual o poll do spot
+USDBRL_MAX_AGE  = 24 * 3600                     # cache vale 24h se a cadeia cair
+AAPI_USDBRL     = "https://economia.awesomeapi.com.br/json/last/USD-BRL"
+AAPI_ALL        = "https://economia.awesomeapi.com.br/json/all"
+YAHOO_UBRL_Q2   = ("https://query2.finance.yahoo.com/v8/finance/chart/USDBRL=X"
+                   "?range=1d&interval=5m")
+YAHOO_UBRL_Q1   = ("https://query1.finance.yahoo.com/v8/finance/chart/USDBRL=X"
+                   "?range=1d&interval=5m")
+TE_USDBRL_URL   = "https://tradingeconomics.com/brazil/currency"
+FLOATRATES_URL  = "https://www.floatrates.com/daily/usd.json"
+FX_JSD_PAGES    = ("https://latest.currency-api.pages.dev/v1/currencies/usd.json")
+FX_JSD_BRL_PG   = ("https://latest.currency-api.pages.dev/v1/currencies/brl.json")
+FX_FRA          = "https://api.frankfurter.dev/v1/latest?base=USD&symbols=BRL"
+BCB_SGS_ULT     = ("https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}"
+                   "/dados/ultimos/1?formato=json")
+OLINDA_DIA      = ("https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
+                   "CotacaoDolarDia(dataCotacao=@dataCotacao)"
+                   "?@dataCotacao='{date}'&$format=json")
+OLINDA_PER      = ("https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
+                   "CotacaoDolarPeriodo(dataInicial=@dataInicial,"
+                   "dataFinalCotacao=@dataFinalCotacao)"
+                   "?@dataInicial='{d0}'&@dataFinalCotacao='{d1}'&$format=json")
+BCB_SOAP_URL    = "https://www3.bcb.gov.br/wssgs/services/FachadaWSSGS"
+SGS_COMPRA      = 10813                         # dólar comercial compra (PTAX)
+SGS_VENDA       = 1                             # dólar comercial venda (PTAX)
 STATE_DIR     = os.path.expanduser("~/.local/share/gold-widget")
 CACHE_FILE    = os.path.join(STATE_DIR, "last_price.json")
 LOG_FILE      = os.path.join(STATE_DIR, "widget.log")
@@ -1458,6 +1517,11 @@ def fmt_bps(v):
     s = f"{v:,.1f}"
     return s.replace(",", "\u00a0").replace(".", ",").replace("\u00a0", ".")
 
+def fmt_fx4(v):
+    """5,1526 (pt-BR, 4 decimais) — par cambial USD/BRL."""
+    s = f"{v:,.4f}"
+    return s.replace(",", "\u00a0").replace(".", ",").replace("\u00a0", ".")
+
 def _has_cjk(s):
     return any("\u4e00" <= ch <= "\u9fff" for ch in s)
 
@@ -1479,6 +1543,18 @@ def _http_get(url, headers=None, timeout=NET_TIMEOUT):
 
 def _get_json(url, headers=None, timeout=NET_TIMEOUT):
     return json.loads(_http_get(url, headers, timeout).decode("utf-8"))
+
+def _http_post_raw(url, body, headers=None, timeout=NET_TIMEOUT):
+    """POST com corpo cru (XML/texto) — o _http_post_json faz json.dumps
+    e estraga SOAP."""
+    if isinstance(body, str):
+        body = body.encode("utf-8")
+    hdrs = {"User-Agent": "gold-widget/5.0", "Accept": "*/*"}
+    if headers:
+        hdrs.update(headers)
+    req = urllib.request.Request(url, data=body, headers=hdrs)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", "replace")
 
 def _http_post_json(url, payload, headers=None, timeout=NET_TIMEOUT):
     hdrs = {"User-Agent": "gold-widget/5.0", "Accept": "*/*",
@@ -1664,6 +1740,226 @@ def _fx_fresh(fx):
     """Câmbio utilizável p/ derivação: presente e com até FX_MAX_AGE."""
     return bool(fx and fx.get("usdbrl")
                 and time.time() - fx.get("ts", 0) <= FX_MAX_AGE)
+
+# ------------------- FETCH · USD/BRL (campo visível, v8.2) -----------------
+# Só o campo "CÂMBIO · USD/BRL". NÃO mexe no fetch_fx (derivações). Mid =
+# (compra+venda)/2 ou (bid+ask)/2; fonte de 1 número usa o número direto.
+# Cada degrau tem nome/cooldown próprio (padrão v6.4): falha cai no próximo
+# automaticamente, e se o próximo falhar cai em outro, até acabar.
+
+def _mid(a, b):
+    """Mid de um par compra/venda ou bid/ask; 1 número só vira o mid."""
+    if a is None and b is None:
+        raise ValueError("sem cotação")
+    if a is None:
+        return float(b)
+    if b is None:
+        return float(a)
+    return (float(a) + float(b)) / 2.0
+
+def _ok_usdbrl(r):
+    """Valida o mid: tem que ser um USD/BRL plausível."""
+    r = float(r)
+    if not (1.0 <= r <= 20.0):
+        raise ValueError(f"USD/BRL fora de faixa: {r}")
+    return r
+
+def _usdbrl_awesomeapi():
+    """1. awesomeapi: bid/ask do par USDBRL (intraday BR). Reserva /all."""
+    errs = []
+    for url in (AAPI_USDBRL, AAPI_ALL):
+        try:
+            d = _get_json(url, {"User-Agent": BROWSER_UA}, timeout=10)
+            u = d.get("USDBRL") or d.get("USD") or {}
+            return _ok_usdbrl(_mid(_to_float(u.get("bid")),
+                                   _to_float(u.get("ask"))))
+        except Exception as e:
+            errs.append(f"{url.split('/')[-1]}: {e}")
+    raise ValueError("awesomeapi (" + "; ".join(errs) + ")")
+
+def _usdbrl_yahoo():
+    """2. Yahoo USDBRL=X (chart). q2 -> q1 em erro/429. Usa bid/ask se
+    vierem; senão regularMarketPrice."""
+    errs = []
+    for url in (YAHOO_UBRL_Q2, YAHOO_UBRL_Q1):
+        try:
+            _yahoo_throttle()
+            d = _get_json(url, {"User-Agent": BROWSER_UA}, timeout=10)
+            res = (d.get("chart") or {}).get("result") or []
+            if not res:
+                raise ValueError("sem result")
+            meta = res[0].get("meta") or {}
+            b = _to_float(meta.get("regularMarketBid"))
+            a = _to_float(meta.get("regularMarketAsk"))
+            if b is not None or a is not None:
+                return _ok_usdbrl(_mid(b, a))
+            p = _to_float(meta.get("regularMarketPrice"))
+            if p is None:
+                raise ValueError("sem preço")
+            return _ok_usdbrl(p)
+        except Exception as e:
+            errs.append(str(e))
+    raise ValueError("Yahoo (" + "; ".join(errs) + ")")
+
+def _usdbrl_te():
+    """3. TradingEconomics /brazil/currency — scrape market_last (mesmo
+    scraper do HO=F/ureia/enxofre)."""
+    d = _fetch_te_commodity(TE_USDBRL_URL, 20)
+    return _ok_usdbrl(d["price"])
+
+def _usdbrl_floatrates():
+    """4. floatrates: usd.json -> brl.rate (intraday)."""
+    d = _get_json(FLOATRATES_URL, {"User-Agent": BROWSER_UA}, timeout=10)
+    return _ok_usdbrl(_to_float((d.get("brl") or {}).get("rate")))
+
+def _usdbrl_currency_api():
+    """5. currency-api: usd.brl nos 2 espelhos (pages.dev FRESCO 1º — o
+    jsDelivr @latest fica preso na versão do pacote e serve cotação velha;
+    validado 24/09/2026: jsDelivr 5,1015 vs pages.dev 5,1672). Reserva o
+    inverso 1/brl.usd."""
+    errs = []
+    for url in (FX_JSD_PAGES, FX_JSD):
+        try:
+            d = _get_json(url, timeout=12)
+            r = _to_float((d.get("usd") or {}).get("brl"))
+            if r:
+                return _ok_usdbrl(r)
+            raise ValueError("sem usd.brl")
+        except Exception as e:
+            errs.append(str(e))
+    for url in (FX_JSD_BRL_PG,):
+        try:
+            d = _get_json(url, timeout=12)
+            inv = _to_float((d.get("brl") or {}).get("usd"))
+            if inv and inv > 0:
+                return _ok_usdbrl(1.0 / inv)
+            raise ValueError("sem brl.usd")
+        except Exception as e:
+            errs.append(f"inv: {e}")
+    raise ValueError("currency-api (" + "; ".join(errs) + ")")
+
+def _usdbrl_erapi():
+    """6. open.er-api.com: rates.BRL (diário)."""
+    d = _get_json(FX_ERAPI, timeout=10)
+    return _ok_usdbrl(_to_float((d.get("rates") or {}).get("BRL")))
+
+def _usdbrl_frankfurter():
+    """7. frankfurter.dev: rates.BRL (ECB, diário). O .app redireciona
+    p/ .dev — só .dev responde JSON."""
+    d = _get_json(FX_FRA, timeout=10)
+    return _ok_usdbrl(_to_float((d.get("rates") or {}).get("BRL")))
+
+def _bcb_sgs_valor(serie):
+    """Último valor do SGS (texto '5.1414') ou None se a série não
+    publicou (fds/feriado não pode matar o degrau inteiro)."""
+    try:
+        d = _get_json(BCB_SGS_ULT.format(serie=serie), timeout=10)
+    except Exception:
+        return None
+    if isinstance(d, list) and d:
+        return _to_float(d[-1].get("valor"))
+    return None
+
+def _usdbrl_bcb_sgs():
+    """8. BCB SGS: compra (10813) + venda (1) -> mid. Uma série morta
+    (fds) não derruba o degrau: usa a outra."""
+    c = _bcb_sgs_valor(SGS_COMPRA)
+    v = _bcb_sgs_valor(SGS_VENDA)
+    return _ok_usdbrl(_mid(c, v))
+
+def _olinda_mid(values):
+    """Mid da entrada PTAX mais recente de uma lista Olinda."""
+    best = None
+    for it in values or []:
+        ts = str(it.get("dataHoraCotacao") or "")
+        if best is None or ts > str(best.get("dataHoraCotacao") or ""):
+            best = it
+    if not best:
+        raise ValueError("Olinda sem cotação")
+    return _mid(_to_float(best.get("cotacaoCompra")),
+                _to_float(best.get("cotacaoVenda")))
+
+def _usdbrl_olinda():
+    """9. Olinda PTAX: CotacaoDolarDia (hoje; 13h BRT e pode sair vazio)
+    -> CotacaoDolarPeriodo (últimos dias) -> mid compra/venda."""
+    errs = []
+    for back in (0, 1, 2, 3):
+        day = (datetime.now(timezone.utc) - timedelta(days=back))
+        date = day.strftime("%m-%d-%Y")
+        try:
+            d = _get_json(OLINDA_DIA.format(date=date), timeout=12)
+            vals = d.get("value") or []
+            if vals:
+                return _ok_usdbrl(_olinda_mid(vals))
+            errs.append(f"dia {date} vazio")
+        except Exception as e:
+            errs.append(f"dia {date}: {e}")
+    try:
+        d0 = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%m-%d-%Y")
+        d1 = datetime.now(timezone.utc).strftime("%m-%d-%Y")
+        d = _get_json(OLINDA_PER.format(d0=d0, d1=d1), timeout=12)
+        return _ok_usdbrl(_olinda_mid(d.get("value") or []))
+    except Exception as e:
+        errs.append(f"periodo: {e}")
+    raise ValueError("Olinda (" + "; ".join(errs) + ")")
+
+_SOAP_ENV = (
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+    ' xmlns:pub="http://publico.servicos.wssgs.bcb.gov.br">'
+    '<soapenv:Header/><soapenv:Body><pub:getUltimoValorVO>'
+    '<pub:codigoSérie>{serie}</pub:codigoSérie>'
+    '</pub:getUltimoValorVO></soapenv:Body></soapenv:Envelope>'
+)
+
+def _bcb_soap_valor(serie):
+    """Espelho SOAP do SGS (host www3): último valor da série ou None."""
+    try:
+        xml = _http_post_raw(BCB_SOAP_URL, _SOAP_ENV.format(serie=serie),
+                             {"Content-Type": "text/xml; charset=utf-8",
+                              "SOAPAction": ""}, timeout=12)
+    except Exception:
+        return None
+    m = re.search(r"<svalor[^>]*>([0-9.]+)", xml)
+    return _to_float(m.group(1)) if m else None
+
+def _usdbrl_bcb_soap():
+    """10. BCB SOAP www3 (host espelho do SGS): compra+venda -> mid."""
+    c = _bcb_soap_valor(SGS_COMPRA)
+    v = _bcb_soap_valor(SGS_VENDA)
+    return _ok_usdbrl(_mid(c, v))
+
+def fetch_usdbrl():
+    """USD/BRL mid p/ o campo visível. Cadeia (v8.2, cooldown por fonte):
+    awesomeapi -> Yahoo -> TE -> floatrates -> currency-api -> er-api ->
+    frankfurter -> BCB SGS -> Olinda PTAX -> BCB SOAP. Cada falha cai no
+    próximo degrau automaticamente; se o próximo falhar cai em outro, até
+    acabar. O chamador segura o cache 24h quando levanta."""
+    errs = []
+    chain = (
+        ("usdbrl-awesomeapi",    _usdbrl_awesomeapi),
+        ("usdbrl-yahoo",         _usdbrl_yahoo),
+        ("usdbrl-te",            _usdbrl_te),
+        ("usdbrl-floatrates",    _usdbrl_floatrates),
+        ("usdbrl-currency-api",  _usdbrl_currency_api),
+        ("usdbrl-er-api",        _usdbrl_erapi),
+        ("usdbrl-frankfurter",   _usdbrl_frankfurter),
+        ("usdbrl-bcb-sgs",       _usdbrl_bcb_sgs),
+        ("usdbrl-olinda",        _usdbrl_olinda),
+        ("usdbrl-bcb-soap",      _usdbrl_bcb_soap),
+    )
+    for name, fn in chain:
+        if not _src_due(name):
+            continue                       # fonte em cooldown: pula p/ a próxima
+        try:
+            rate = _ok_usdbrl(fn())        # validação extra (defesa em profundidade)
+            _src_clear(name)
+            return {"rate": rate, "src": name.replace("usdbrl-", ""),
+                    "ts": time.time()}
+        except Exception as e:
+            errs.append(f"{name.replace('usdbrl-', '')}: {e}")
+            _src_cooldown(name, USDBRL_REFETCH, str(e))
+    raise RuntimeError("USD/BRL sem fonte viva (" + "; ".join(errs) + ")")
 
 def fetch_goldprice_org(curr="USD"):
     """Spot Londres via goldprice.org (fallback do spot principal).
@@ -3661,6 +3957,15 @@ class GoldWidget:
                               font=("DejaVu Sans", 8))
         self.l_sub.pack(anchor="w", padx=12, pady=(0, 8))
 
+        # --------------- seção CÂMBIO · USD/BRL (v8.2) --------------------
+        # Só o valor (mid), estilo do spot do ouro. Sem rodapé/gráfico.
+        self.l_fx_title = tk.Label(self.body, text="CÂMBIO · USD/BRL", bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 9, "bold"))
+        self.l_fx_title.pack(anchor="w", padx=12, pady=(8, 0))
+        self.l_usdbrl = tk.Label(self.body, text="—", bg=BG, fg=TXT_USD,
+                                 font=("DejaVu Sans", 13, "bold"))
+        self.l_usdbrl.pack(anchor="w", padx=12, pady=(0, 8))
+
         # --------------- seção COBRE (COMEX HG=F + SHFE CU0, v7.3) --------
         self.copper_frame = tk.Frame(self.body, bg=BG)
         self.copper_frame.pack(anchor="w", padx=12, fill="x")
@@ -3799,8 +4104,10 @@ class GoldWidget:
                          (self.l_brl, "spot_brl"),
                          (self.l_brl_var, "spot_brl"),
                          (self.l_brl_var_week, "spot_brl"),
-                         (self.l_sub, None),
-                         (self.l_copper_sub, None),
+                          (self.l_sub, None),
+                          (self.l_fx_title, None),
+                          (self.l_usdbrl, None),
+                          (self.l_copper_sub, None),
                          (self.l_us_sub, None), (self.l_cds_sub, None),
                          (self.l_ho_sub, None), (self.l_brent_sub, None),
                          (self.l_sc_sub, None),
@@ -4428,6 +4735,22 @@ class GoldWidget:
             self.last.pop("sulfur", None)
             log("enxofre: cache >14 dias sem fonte; removido")
 
+        # ---- Câmbio · USD/BRL (v8.2): refetch 90s; cadeia 10 degraus
+        #      (intraday -> BCB); falha da cadeia mantém cache ≤24h ----
+        ub = self.last.get("usdbrl")
+        if _due("usdbrl", ub, USDBRL_REFETCH):
+            try:
+                self.last["usdbrl"] = fetch_usdbrl()
+                _cooldown_clear("usdbrl")
+            except Exception as e:
+                log(f"USD/BRL indisponível ({e}); mantendo cache")
+                _cooldown("usdbrl", USDBRL_REFETCH, str(e))
+        ub = self.last.get("usdbrl")
+        if ub and (ub.get("rate") is None
+                   or time.time() - ub.get("ts", 0) > USDBRL_MAX_AGE):
+            self.last.pop("usdbrl", None)
+            log("USD/BRL: cache >24h sem fonte; removido")
+
         usd_ok = False
         if usd:
             self.last["usd_price"] = usd["price"]
@@ -4595,6 +4918,9 @@ class GoldWidget:
         self.last.pop("china", None)
         self.last.pop("gc_fut", None)
 
+        # seção CÂMBIO · USD/BRL (v8.2)
+        self._render_usdbrl()
+
         # seção COBRE · COMEX HG=F (v7.2)
         self._render_copper()
         self._render_copper_sub()
@@ -4654,6 +4980,16 @@ class GoldWidget:
         if src and src != "goldprice.dev":
             sub += f" · fonte: {src}"
         self.l_sub.config(text=sub, fg=TXT_DIM)
+
+    def _render_usdbrl(self):
+        """Campo visível USD/BRL (v8.2): só o valor, mid 4 dec pt-BR.
+        Cache ≤24h se a cadeia caiu; senão "—"."""
+        d = self.last.get("usdbrl") or {}
+        rate = d.get("rate")
+        if rate is None or time.time() - d.get("ts", 0) > USDBRL_MAX_AGE:
+            self.l_usdbrl.config(text="—")
+            return
+        self.l_usdbrl.config(text=f"US$ 1 = R$ {fmt_fx4(rate)}")
 
     # ------------------ exibição · seção FUTURO COMEX (v5.6) --------------
     def _fut_label(self, rec=None):
@@ -5597,6 +5933,11 @@ def dump():
     last = {}
     fx = None
     try:
+        u = fetch_usdbrl()
+        print(f"USD/BRL [{u['src']}]: {u['rate']:.4f} (mid)")
+    except Exception as e:
+        print(f"USD/BRL (10 fontes): FALHOU ({e})")
+    try:
         fx = fetch_fx()
         last["fx"] = fx
         print(f"FX [{fx['src']}]: USDBRL {fx['usdbrl']:.4f} · "
@@ -5824,10 +6165,14 @@ def main():
         print("Sem display gráfico (DISPLAY não definido).", file=sys.stderr)
         return 1
 
-    log("iniciando widget (v7.3: seção COBRE com COMEX HG=F + SHFE CU0 da"
-        " China — cadeia Sina -> Eastmoney futsseapi -> push2delay ->"
-        " cache, US$/lb com USDCNY fresco; mantém v7.1: janela"
-        " redimensionável + rolagem oculta + tamanho persistente)")
+    log("iniciando widget (v8.2: + seção CÂMBIO · USD/BRL — linha só com o"
+        " valor mid e cadeia de 10 degraus awesomeapi -> Yahoo -> TE ->"
+        " floatrates -> currency-api -> er-api -> frankfurter -> BCB SGS ->"
+        " Olinda PTAX -> BCB SOAP, cache 24h; mantém v7.3: seção COBRE com"
+        " COMEX HG=F + SHFE CU0 da China — cadeia Sina -> Eastmoney"
+        " futsseapi -> push2delay -> cache, US$/lb com USDCNY fresco;"
+        " mantém v7.1: janela redimensionável + rolagem oculta + tamanho"
+        " persistente)")
     root = tk.Tk()
     GoldWidget(root)
     root.mainloop()
