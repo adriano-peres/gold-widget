@@ -384,6 +384,85 @@ v5.8:
         diário 113.cum (== Sina kline CU0, conferido: fech. 22/09
         111.320 nas duas) ÷ USDCNY ÷ lb, fallback no log local (US$/lb
         desde a v7.3). Falha isolada das demais seções.
+  v8.0 (ESTA VERSAO, a pedido do usuário):
+      * NOVO — seção "BRASIL · YIELD GOVERNO (NOMINAL)": curva nominal
+        LTN/NTN em % a.a. (a do noticiário: 14,17% 10y). NÃO é a NTN-B
+        real do WGB (7,38% 10y) — bases DIFERENTES, não misturam; o
+        usuário escolheu SÓ a nominal. UMA linha exibida, com DROPDOWN
+        ▾ para selecionar o vencimento (3m/6m/9m/1a/2a/3a/5a/8a/10a;
+        seleção persiste no cache) + Δ do dia em PONTOS PERCENTUAIS
+        (não % relativo — yield não se lê em % de %) + rodapé com a
+        curva inteira. Posição: logo abaixo do CDS (Brasil c/ Brasil).
+      * Cadeia (5 degraus, cooldown por fonte, padrão v6.4):
+          - Investing tabela SSR /rates-bonds/brazil-government-bonds
+            (GET puro; cada <tr id="pair_N"> tem pid-N-last, -last_close,
+            -pc (Δ pp) e data epoch; vencimento do title 'Brazil
+            10-Year' — o SLUG DISCORDA do título no 8y ('brazil-6-
+            year-bond-yield' com title 'Brazil 8-Year'), por isso o
+            título manda)                                [principal]
+          - a mesma tabela no host m. (reserva de host)  [fallback 1]
+          - TradingEconomics /brazil/government-bond-yield (SÓ 10y — os
+            slugs 1y/2y/3y do TE são 404 genérico, validado; o Pchg do
+            TE em títulos É Δ pp: -0.02 == '0.02 percentage points
+            decrease' na própria descrição deles; data real do resumo
+            '... eased to 14.17% on September 22, 2026')  [fallback 2;
+            pulado quando o vencimento selecionado não é 10a]
+          - Investing página do instrumento (SSR __NEXT_DATA__, mesmo
+            padrão do CDS v5.8; bloco único com last/lastUpdateTime;
+            EOD/delayed — last pode ser o fech. anterior) [fallback 3]
+          - Investing API financialdata/historical (a MESMA do CDS
+            v7.1; linha de HOJE da série diária — conferido vivo:
+            1ª row do dia = 14.17)                        [fallback 4]
+          - cache local 4d (cobre fds), "(cache)" após 2 refetches.
+        pair IDs por vencimento fixados no código (capturados da
+        tabela ao vivo 23/09/2026: 3M 1052514, 6M 1052515, 9M 24023,
+        1Y 24024, 2Y 24025, 3Y 24026, 5Y 24027, 8Y 24028, 10Y 24029).
+      * Gráfico no clique: série diária da API historical (7D/1M/3M/
+        6M/1A), fallback no log local — que acumula TODOS os vencimentos
+        do dropdown a cada ciclo. Δ em pp (não %). Falha isolada das
+        demais seções.
+  v8.1 (ESTA VERSAO, a pedido do usuário):
+    * NOVO — seção "EUA · YIELD GOVERNO (TREASURY)": curva nominal UST
+      em % a.a. (a do noticiário: 10y ~5,12%). Só a nominal — TIPS/real
+      fica FORA (mesma regra da NTN-B no BR: bases não se misturam).
+      Vencimentos padrão de mercado: 1m/3m/6m/1a/2a/3a/5a/7a/10a/20a/
+      30a, MISTURANDO bills (≤1a, taxa de desconto), notes (2-10a) e
+      bonds (20-30a) como o noticiário — com o tipo (bill/note/bond) no
+      NOME do vencimento. UMA linha exibida, com DROPDOWN ▾ (seleção
+      persiste no cache como 'us_yield_sel') + Δ do dia em PONTOS
+      PERCENTUAIS + rodapé com a curva inteira. Posição: logo abaixo do
+      yield BR (Brasil com EUA). Default: 10a.
+    * Cadeia (6 degraus, cooldown por fonte, padrão v6.4; os nomes das
+      fontes têm prefixo US p/ não colidir com o cooldown do BR):
+          - Investing tabela SSR /rates-bonds/usa-government-bonds
+            (o path dos EUA é 'usa-…', NÃO 'us-…'; cada <tr id="pair_N">
+            tem pid-N-last, -pc (Δ pp) e -time; vencimento do title
+            'United States 10-Year' no <a> — o 20y tem slug 'us-20-year-
+            bond-yield' sem os pontos de 'u.s.-…' dos demais, por isso o
+            título manda; 2m e 4m existem na tabela e ficam FORA da
+            curva pedida)                                 [principal]
+          - a mesma tabela no host m.                    [fallback 1]
+          - TradingEconomics — SÓ os vencimentos com página própria
+            validados 23/09/2026: 3m ('3-month-bill-yield'), 6m ('6-
+            month-bill-yield'), 10a ('government-bond-yield' — o slug
+            '10-year-bond-yield' do TE é 404), 20a ('20-year-bond-
+            yield'), 30a ('30-year-bond-yield'); os demais são 404
+            genérico                                        [fallback 2]
+          - Investing página do instrumento (/rates-bonds/u.s.-10-year-
+            bond-yield, SSR __NEXT_DATA__, padrão CDS)     [fallback 3]
+          - Investing API financialdata/historical (linha de HOJE)  [4]
+          - FRED DGS* (Treasury CMT oficial, EOD; curva inteira numa
+            chamada fredgraph.csv: DGS1MO/DGS3MO/DGS6MO/DGS1/DGS2/
+            DGS3/DGS5/DGS7/DGS10/DGS20/DGS30; completa o que os degraus
+            de vencimento único não trouxeram, sem sobrescrever)  [5]
+          - cache local 4d (cobre fds), "(cache)" após 2 refetches.
+        pair IDs por vencimento fixados no código (capturados da tabela
+        ao vivo 23/09/2026: 1M 23697, 3M 23698, 6M 23699, 1Y 23700,
+        2Y 23701, 3Y 23702, 5Y 23703, 7Y 23704, 10Y 23705, 20Y 1161827,
+        30Y 23706).
+    * Gráfico no clique: série diária da API historical (7D/1M/3M/6M/1A)
+      com fallback FRED e no log local (que acumula TODOS os vencimentos
+      do dropdown a cada ciclo). Δ em pp. Falha isolada das demais seções.
   v8.2 (ESTA VERSAO, a pedido do usuário):
     * NOVO — seção "CÂMBIO · USD/BRL": linha visível com SÓ o valor do
       dólar em reais ("US$ 1 = R$ 5,1526", mid, 4 decimais pt-BR), estilo
@@ -412,8 +491,47 @@ v5.8:
       Cooldown POR FONTE (padrão v6.4): fallback não anistia a fonte
       morta. Refetch 90s. Também sai no --dump. Falha isolada das demais
       seções.
- Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
- """
+  v8.3 (ESTA VERSAO, a pedido do usuário):
+    * NOVO — BANDEJA DO SISTEMA (system tray): o widget agora SEMPRE inicia
+      minimizado na bandeja (topo do GNOME, extensão AppIndicators ativa) e
+      só aparece quando o usuário manda mostrar. Polling/cache/log seguem
+      rodando em segundo plano mesmo com a janela oculta.
+    * v8.3.1 — pump do loop GLib no _tick: o AppIndicator precisa do
+      despacho GLib para manter o registro SNI vivo; sem bombear, o ícone
+      sumia ~5s após o boot (set_status ACTIVE sozinho não segura). O pump
+      é main_context_iteration(False) — só despacha o pendente, nunca
+      bloqueia o Tk; falha aqui nunca quebra o widget.
+    * Implementação: AyatanaAppIndicator3 via GI (pacote do sistema,
+      gir1.2-ayatana-appindicator3 — zero dependência pip nova; stdlib do
+      widget continua intacto). Ícone: círculo dourado gerado com Pillow
+      (já instalado 10.2) em ~/.local/share/gold-widget/tray-gold.png,
+      com fallback para ícone do tema se o Pillow/geração falhar.
+    * Limitação REAL do Ayatana no GNOME (validada no ambiente): o clique
+      no ícone SEMPRE abre o menu — não há sinal de clique-esquerdo para
+      interceptar (por isso "clique alterna" virou item "Mostrar/Ocultar"
+      no menu, que é 100% confiável). Label ao lado do ícone mostra o
+      spot em BRL (R$/g, v8.4); título/tooltip mostra BRL + USD.
+    * Menu da bandeja (Gtk, thread-safe via GLib.idle_add): Mostrar/Ocultar
+      + Atualizar agora + Ver gráfico (mesmas entradas do menu da janela)
+      + Sair. O menu da JANELA (botão direito) ganha "Minimizar p/ bandeja".
+      Fechar/X continua encerrando (pedido do usuário: SÓ o item de menu
+      minimiza). Flag de fuga --show inicia visível (debug). Se o Ayatana
+      falhar por qualquer motivo, o app NUNCA quebra: loga e segue visível
+      como antes, com o item de menu tornando-se no-op seguro.
+  v8.4 (ESTA VERSAO, a pedido do usuário):
+    * CORREÇÃO — label da BANDEJA agora em BRL (R$/g, "R$ 714,32/g",
+      igual ao widget), não mais em USD. O USD só aparece no label se
+      LITERALMENTE todos os fallbacks do BRL falharem (goldprice.dev +
+      derivado USDxBRL + goldprice.org/BRL sem dado): aí mostra o USD
+      temporário ("US$ 4.266,16") até o BRL voltar.
+    * Tooltip/título da bandeja mantém USD+BRL mas INVERTE a ordem:
+      BRL primeiro ("R$ 714,32/g · US$ 4,266.16").
+    * Refresh da bandeja amarrado em TODO ciclo de poll (via
+      _tray_refresh_soon no fim do _poll_once_impl) + tick de 5 s
+      (_tray_refresh_tick) + _render: o valor da barra acompanha o
+      widget periodicamente, como o usuário exigiu.
+  Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
+  """
 
 import io
 import json
@@ -488,6 +606,7 @@ SGS_VENDA       = 1                             # dólar comercial venda (PTAX)
 STATE_DIR     = os.path.expanduser("~/.local/share/gold-widget")
 CACHE_FILE    = os.path.join(STATE_DIR, "last_price.json")
 LOG_FILE      = os.path.join(STATE_DIR, "widget.log")
+TRAY_ICON_FILE = os.path.join(STATE_DIR, "tray-gold.png")  # v8.3: ícone da bandeja
 MARGIN        = 16                                 # distância da borda lateral
 MARGIN_Y      = 40                                 # abaixo da barra do topo
 TROY_OZ_GRAMS = 31.1034768                         # 1 onça troy em gramas
@@ -585,6 +704,90 @@ CDS_MAX_AGE      = 7 * 86400            # cache vence (7 dias sem fonte)
 # no lastUpdateTime — mais velho que CDS_INV_MAX_AGE = feed congelado.
 INV_CDS_URL      = "https://www.investing.com/rates-bonds/brazil-cds-5-years-usd"
 CDS_INV_MAX_AGE  = 4 * 86400            # EOD (~1 dia) + folga p/ fds (sex->seg ~3d)
+
+# ------------- CONFIG · YIELD BRASIL NOMINAL (LTN/NTN, v8.0) -----------------
+# Curva nominal do governo brasileiro (LTN/NTN, % a.a. — a que aparece no
+# noticiário: 10y ~14%). Diferente da NTN-B real (WGB, 10y ~7,38%): bases
+# não se misturam, o usuário escolheu SÓ a nominal. Cadeia (cada fonte com
+# cooldown próprio, padrão v6.4):
+#   1º Investing tabela SSR (curva inteira, intraday, host www)
+#   2º Investing tabela SSR host m. (mesma página, host reserva)
+#   3º TradingEconomics /brazil/government-bond-yield (SÓ o 10y; os
+#      slugs 1y/2y/3y do TE são 404 genérico — validado 23/09/2026)
+#   4º Investing página do instrumento (SSR __NEXT_DATA__, padrão CDS)
+#   5º Investing API financialdata/historical (linha de hoje da série)
+#   6º cache local (4d)
+INV_BR_BONDS_URL   = "https://www.investing.com/rates-bonds/brazil-government-bonds"
+INV_BR_BONDS_URL_M = "https://m.investing.com/rates-bonds/brazil-government-bonds"
+TE_BR_YIELD_URL    = "https://tradingeconomics.com/brazil/government-bond-yield"
+YIELD_MATS = {                  # vencimento -> pair id + slug (capturado 23/09/2026)
+    "3m":  {"ordem": 0, "nome": "3 meses", "pair": "1052514", "slug": "brazil-3-month"},
+    "6m":  {"ordem": 1, "nome": "6 meses", "pair": "1052515", "slug": "brazil-6-month"},
+    "9m":  {"ordem": 2, "nome": "9 meses", "pair": "24023",   "slug": "brazil-9-month-bond-yield"},
+    "1a":  {"ordem": 3, "nome": "1 ano",   "pair": "24024",   "slug": "brazil-1-year-bond-yield"},
+    "2a":  {"ordem": 4, "nome": "2 anos",  "pair": "24025",   "slug": "brazil-2-year-bond-yield"},
+    "3a":  {"ordem": 5, "nome": "3 anos",  "pair": "24026",   "slug": "brazil-3-year-bond-yield"},
+    "5a":  {"ordem": 5.1, "nome": "5 anos", "pair": "24027",  "slug": "brazil-5-year-bond-yield"},
+    "8a":  {"ordem": 6, "nome": "8 anos",  "pair": "24028",   "slug": "brazil-6-year-bond-yield"},
+    "10a": {"ordem": 7, "nome": "10 anos", "pair": "24029",   "slug": "brazil-10-year-bond-yield"},
+}
+YIELD_DEFAULT   = "10a"
+YIELD_LO        = 0.5                   # sanidade % a.a. (nominal nunca < 0,5)
+YIELD_HI        = 35.0                  # teto (hist LTN 2015-16 ~16%)
+YIELD_REFETCH   = 15 * 60               # intraday-ish: refetch no máx. 1/15min
+YIELD_MAX_AGE   = 4 * 86400             # cache vence (4 dias; cobre fds)
+
+# ------------- CONFIG · YIELD EUA NOMINAL (UST, v8.1) -------------------
+# Curva nominal do Tesouro americano (bills/notes/bonds, % a.a. — a que
+# aparece no noticiário: 10y ~5%). Só a nominal: TIPS/real fica FORA
+# (mesma regra da NTN-B no BR). Bills (≤1a) são taxa de desconto e
+# notes/bonds (2-30a) são coupon yield — misturados como no noticiário,
+# com o tipo no NOME de cada vencimento. Cadeia (cada fonte com cooldown
+# próprio, prefixo USYIELD p/ não colidir com o do BR):
+#   1º Investing tabela SSR (curva inteira, intraday, host www)
+#   2º Investing tabela SSR host m. (mesma página, host reserva)
+#   3º TradingEconomics (SÓ 3m/6m/10a/20a/30a — validado 23/09/2026)
+#   4º Investing página do instrumento (SSR __NEXT_DATA__, padrão CDS)
+#   5º Investing API financialdata/historical (linha de hoje da série)
+#   6º FRED DGS* (CMT oficial, EOD — completa a curva inteira)
+#   7º cache local (4d)
+INV_US_BONDS_URL   = "https://www.investing.com/rates-bonds/usa-government-bonds"
+INV_US_BONDS_URL_M = "https://m.investing.com/rates-bonds/usa-government-bonds"
+TE_US_YIELD_FMT    = "https://tradingeconomics.com/united-states/{slug}"
+US_YIELD_MATS = {   # vencimento -> pair + slug Investing + série FRED + slug TE
+    "1m":  {"ordem": 0,  "nome": "1 mês (bill)",   "pair": "23697",
+            "slug": "u.s.-1-month-bond-yield",  "fred": "DGS1MO", "te": None},
+    "3m":  {"ordem": 1,  "nome": "3 meses (bill)", "pair": "23698",
+            "slug": "u.s.-3-month-bond-yield",  "fred": "DGS3MO",
+            "te": "3-month-bill-yield"},
+    "6m":  {"ordem": 2,  "nome": "6 meses (bill)", "pair": "23699",
+            "slug": "u.s.-6-month-bond-yield",  "fred": "DGS6MO",
+            "te": "6-month-bill-yield"},
+    "1a":  {"ordem": 3,  "nome": "1 ano (bill)",   "pair": "23700",
+            "slug": "u.s.-1-year-bond-yield",   "fred": "DGS1",   "te": None},
+    "2a":  {"ordem": 4,  "nome": "2 anos (note)",  "pair": "23701",
+            "slug": "u.s.-2-year-bond-yield",   "fred": "DGS2",   "te": None},
+    "3a":  {"ordem": 5,  "nome": "3 anos (note)",  "pair": "23702",
+            "slug": "u.s.-3-year-bond-yield",   "fred": "DGS3",   "te": None},
+    "5a":  {"ordem": 6,  "nome": "5 anos (note)",  "pair": "23703",
+            "slug": "u.s.-5-year-bond-yield",   "fred": "DGS5",   "te": None},
+    "7a":  {"ordem": 7,  "nome": "7 anos (note)",  "pair": "23704",
+            "slug": "u.s.-7-year-bond-yield",   "fred": "DGS7",   "te": None},
+    "10a": {"ordem": 8,  "nome": "10 anos (note)", "pair": "23705",
+            "slug": "u.s.-10-year-bond-yield",  "fred": "DGS10",
+            "te": "government-bond-yield"},
+    "20a": {"ordem": 9,  "nome": "20 anos (bond)", "pair": "1161827",
+            "slug": "us-20-year-bond-yield",    "fred": "DGS20",
+            "te": "20-year-bond-yield"},
+    "30a": {"ordem": 10, "nome": "30 anos (bond)", "pair": "23706",
+            "slug": "u.s.-30-year-bond-yield",  "fred": "DGS30",
+            "te": "30-year-bond-yield"},
+}
+US_YIELD_DEFAULT = "10a"
+US_YIELD_LO      = 0.0                  # UST nominal chegou ~0 em 2020 (piso BR 0,5 rejeitaria!)
+US_YIELD_HI      = 20.0                 # teto de sanidade (hist moderno ≤ ~15%)
+US_YIELD_REFETCH = 15 * 60              # intraday-ish: refetch no máx. 1/15min
+US_YIELD_MAX_AGE = 4 * 86400            # cache vence (4 dias; cobre fds)
 
 # ---------------- CONFIG · NYMEX DIESEL HO=F (futuro ULSD, v6.1) -------------
 # Futuro ULSD (heating oil) da NYMEX — o benchmark do diesel (proxy do HO1!
@@ -839,6 +1042,12 @@ INV_CDS_API_FMT  = ("https://api.investing.com/api/financialdata/"
                     "historical/{pair}?start-date={beg}&end-date={end}"
                     "&time-frame=Daily&add-missing-rows=false")
 FRED_CSV_FMT    = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
+# v8.1 — o FRED PENDURA (timeout, nem 403) em UA de navegador e no nosso
+# 'gold-widget/5.0'; só responde a UA de cliente HTTP "de verdade"
+# (curl/Wget/python-urllib/okhttp — validado 23/09/2026). Por isso os
+# fetches do FRED usam este UA e NÃO o BROWSER_UA (quebrava o fallback
+# de combustível GASREGW/DIESEL desde sempre: timeout em todo hit).
+FRED_UA         = "python-urllib/3.12"
 DIESEL_FRED_IDS = ("GASDESW", "DIESEL", "DD1NUS_DPG")
 
 
@@ -972,7 +1181,7 @@ def _hist_fred(sids, days):
     for sid in sids:
         try:
             raw = _http_get(FRED_CSV_FMT.format(sid=sid),
-                            {"User-Agent": BROWSER_UA},
+                            {"User-Agent": FRED_UA},
                             timeout=25).decode("utf-8", "replace")
             pts = []
             for ln in raw.splitlines()[1:]:
@@ -1058,6 +1267,83 @@ def _hist_cds(days):
         raise ValueError("SSR sem serie")
     days = int(days)
     return pts[-days:] if len(pts) > days else pts, "Investing.com"
+
+
+def _hist_yield_api(mat, days):
+    """Série diária do yield nominal do vencimento `mat` via API historical
+    do Investing (a MESMA do CDS v7.1; cabeçalho 'domain-id' obrigatório;
+    rows em ordem DESC — sort asc). Serve o gráfico do clique (7D-1A) e o
+    último degrau do quote (linha de HOJE entra intraday — conferido ao
+    vivo 23/09/2026: 1ª row = valor vivo 14.17)."""
+    meta = YIELD_MATS.get(mat)
+    if not meta:
+        raise ValueError(f"vencimento desconhecido: {mat}")
+    end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    beg = (datetime.now(timezone.utc) - timedelta(days=int(days) + 5)
+           ).strftime("%Y-%m-%d")
+    url = INV_CDS_API_FMT.format(pair=meta["pair"], beg=beg, end=end)
+    d = _get_json(url, {"User-Agent": BROWSER_UA,
+                        "Accept": "application/json",
+                        "domain-id": "www"}, timeout=20)
+    rows = d.get("data") or []
+    pts = []
+    for r in rows:
+        dt = str(r.get("rowDateTimestamp") or "")[:10]
+        raw = (r.get("last_closeRaw")
+               if r.get("last_closeRaw") is not None else r.get("last_close"))
+        v = _to_float(raw)
+        if v and YIELD_LO < v < YIELD_HI and len(dt) == 10:
+            pts.append((dt, v))
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError(f"API sem série do {mat}")
+    days = int(days)
+    return pts[-days:] if len(pts) > days else pts, "Investing.com (API)"
+
+
+def _hist_us_yield_api(mat, days):
+    """Série diária do yield nominal do vencimento `mat` (UST) via API
+    historical do Investing (a MESMA do CDS v7.1; cabeçalho 'domain-id'
+    obrigatório; rows em ordem DESC — sort asc). Serve o gráfico do clique
+    (7D-1A) e o degrau do quote (linha de HOJE entra intraday)."""
+    meta = US_YIELD_MATS.get(mat)
+    if not meta:
+        raise ValueError(f"vencimento desconhecido: {mat}")
+    end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    beg = (datetime.now(timezone.utc) - timedelta(days=int(days) + 5)
+           ).strftime("%Y-%m-%d")
+    url = INV_CDS_API_FMT.format(pair=meta["pair"], beg=beg, end=end)
+    d = _get_json(url, {"User-Agent": BROWSER_UA,
+                        "Accept": "application/json",
+                        "domain-id": "www"}, timeout=20)
+    rows = d.get("data") or []
+    pts = []
+    for r in rows:
+        dt = str(r.get("rowDateTimestamp") or "")[:10]
+        raw = (r.get("last_closeRaw")
+               if r.get("last_closeRaw") is not None else r.get("last_close"))
+        v = _to_float(raw)
+        if v and US_YIELD_LO < v < US_YIELD_HI and len(dt) == 10:
+            pts.append((dt, v))
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError(f"API sem série do {mat}")
+    days = int(days)
+    return pts[-days:] if len(pts) > days else pts, "Investing.com (API)"
+
+
+def _hist_us_yield_fred(mat, days):
+    """Série diária do yield CMT oficial do Tesouro (FRED DGS*) — fallback
+    do gráfico quando a API do Investing cai. EOD (fecha ~1 dia atrás)."""
+    meta = US_YIELD_MATS.get(mat) or {}
+    sid = meta.get("fred")
+    if not sid:
+        raise ValueError(f"FRED sem série do {mat}")
+    pts, src = _hist_fred([sid], days + 5)
+    pts = [(d, v) for d, v in pts if US_YIELD_LO < v < US_YIELD_HI]
+    if len(pts) < 2:
+        raise ValueError(f"FRED sem série do {mat}")
+    return pts, src
 
 
 def _hist_oilprice_blend(blend_id, days, label):
@@ -1359,6 +1645,10 @@ def fetch_history(key, days=30, hist_log=None):
     if key.startswith("bank:"):
         bank_name = key.split(":", 1)[1]
         base = "sge_au9999"
+    elif key.startswith("br_yield:"):
+        base = "br_yield"
+    elif key.startswith("us_yield:"):
+        base = "us_yield"
     note = None
     if bank_name:
         note = f"{bank_name} acompanha o fisico: serie SGE de referencia"
@@ -1452,6 +1742,14 @@ def fetch_history(key, days=30, hist_log=None):
             pts, src = _hist_fred(list(DIESEL_FRED_IDS), days)
         elif base == "cds_5y":
             pts, src = _hist_cds(days)
+        elif base == "br_yield":
+            pts, src = _hist_yield_api(key.split(":", 1)[1], days)
+        elif base == "us_yield":
+            _umat = key.split(":", 1)[1]
+            try:
+                pts, src = _hist_us_yield_api(_umat, days)
+            except Exception:
+                pts, src = _hist_us_yield_fred(_umat, days)
         elif base == "urea_me":
             pts, src = _hist_urea_me(days)
         elif base == "urea_br":
@@ -1516,6 +1814,17 @@ def fmt_bps(v):
     """121,1 (pt-BR, 1 decimal) — CDS em basis points."""
     s = f"{v:,.1f}"
     return s.replace(",", "\u00a0").replace(".", ",").replace("\u00a0", ".")
+
+def fmt_yield(v):
+    """14,170 (pt-BR, 3 decimais) — yield em % a.a."""
+    s = f"{v:,.3f}"
+    return s.replace(",", "\u00a0").replace(".", ",").replace("\u00a0", ".")
+
+def fmt_pp(v):
+    """+0,04pp — Δ do yield em pontos percentuais (não % relativo)."""
+    s = f"{v:+,.2f}"
+    s = s.replace(",", "\u00a0").replace(".", ",").replace("\u00a0", ".")
+    return f"{s}pp"
 
 def fmt_fx4(v):
     """5,1526 (pt-BR, 4 decimais) — par cambial USD/BRL."""
@@ -3510,6 +3819,440 @@ def fetch_cds_br():
         errs.append(f"Investing.com: {e}")
     raise RuntimeError("CDS Brasil sem fonte (" + "; ".join(errs) + ")")
 
+# ------------------- FETCH · YIELD BRASIL NOMINAL (v8.0) ---------------------
+def _yield_mat_of_title(title):
+    """'Brazil 10-Year' -> '10a' · 'Brazil 3-Month' -> '3m'. O slug da
+    linha DISCORDA do título no 8y ('brazil-6-year-bond-yield' com title
+    'Brazil 8-Year'), por isso o vencimento vem do título, não do slug."""
+    m = re.search(r"Brazil\s+(\d+)\s*-?\s*(Month|Year)", title or "")
+    if not m:
+        return None
+    return (f"{m.group(1)}m" if m.group(2) == "Month" else f"{m.group(1)}a")
+
+
+def fetch_yield_inv_table(url=INV_BR_BONDS_URL):
+    """Curva nominal INTEIRA na tabela SSR do Investing (GET puro, sem
+    chave): cada <tr id="pair_N"> traz pid-N-last (yield %), pid-N-
+    last_close, pid-N-pc (Δ absoluto — em YIELDS é Δ em pp) e pid-N-time
+    (data epoch do dado). Só linhas 'Brazil X-Month/Year' entram; yield
+    fora de YIELD_LO..HI é rejeitado."""
+    html = _http_get(url, {"User-Agent": BROWSER_UA,
+                           "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=25).decode("utf-8", "replace")
+    out = {}
+    for mid in re.findall(r'<tr id="pair_(\d+)">', html):
+        s = html.find(f'id="pair_{mid}"')
+        if s < 0:
+            continue
+        e = html.find("</tr>", s)
+        row = html[s:e if e > 0 else s + 4000]
+        mt = re.search(r'title="(Brazil [\d\w-]+)"', row)
+        mat = _yield_mat_of_title(mt.group(1) if mt else "")
+        if not mat:
+            continue
+        mlast = re.search(rf'pid-{mid}-last">([0-9.]+)<', row)
+        if not mlast:
+            continue
+        y = _to_float(mlast.group(1))
+        if not y or not (YIELD_LO < y < YIELD_HI):
+            continue
+        mc = re.search(rf'pid-{mid}-pc">([+-]?[0-9.]+)<', row)
+        chg = _to_float(mc.group(1)) if mc else None
+        if chg is not None and abs(chg) > 5.0:
+            chg = None
+        mt2 = re.search(rf'pid-{mid}-time" data-value="(\d+)"', row)
+        dt_lbl = (datetime.fromtimestamp(int(mt2.group(1)), timezone.utc)
+                  .strftime("%H:%M") if mt2 else None)
+        out[mat] = {"yield": y, "chg_pp": chg, "dt": dt_lbl,
+                    "src": "Investing.com", "ts": time.time()}
+    if not out:
+        raise ValueError("Investing: tabela sem yields do Brasil")
+    return out
+
+
+def fetch_yield_te():
+    """Degrau do TE — SÓ o 10y (os slugs 1y/2y/3y do TE são 404 genérico,
+    validado). market_last + market_daily_Pchg; em títulos o Pchg do TE
+    É Δ em PONTOS percentuais (conferido: -0.02 == '0.02 percentage
+    points decrease' na descrição deles). Data real do resumo ('...
+    eased to 14.17% on September 22, 2026') — regex cobre rose/eased/
+    fell/... e não só 'rose to'."""
+    html = _http_get(TE_BR_YIELD_URL, {"User-Agent": BROWSER_UA,
+                                       "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=30).decode("utf-8", "replace")
+    m = re.search(r'id="market_last">\s*([0-9.,]+)\s*<', html)
+    if not m:
+        raise ValueError("TE sem market_last")
+    y = float(m.group(1).replace(",", ""))
+    if not (YIELD_LO < y < YIELD_HI):
+        raise ValueError("TE sem preço válido")
+    mp = re.search(r'id="market_daily_Pchg"[^>]*>\s*(-?[0-9.,]+)\s*%', html)
+    chg = _to_float(mp.group(1).replace(",", "")) if mp else None
+    if chg is not None and abs(chg) > 5.0:
+        chg = None
+    day = None
+    md = re.search(r"(?:rose|eased|fell|climbed|slid|jumped|gained|dropped|"
+                   r"declined|advanced|rebounded|tumbled|rallied)\s+to\s+"
+                   r"[0-9.,]+%?\s+on\s+([A-Z][a-z]+ \d{1,2}, \d{4})", html)
+    if md:
+        try:
+            day = datetime.strptime(md.group(1), "%B %d, %Y").date().isoformat()
+        except ValueError:
+            pass
+    return {"10a": {"yield": y, "chg_pp": chg, "day": day,
+                    "src": "TradingEconomics", "ts": time.time()}}
+
+
+def fetch_yield_inv_instr(mat):
+    """Degrau por vencimento: SSR da página do instrumento no Investing
+    (mesmo padrão do CDS v5.8: __NEXT_DATA__ + busca genérica do bloco com
+    last/lastUpdateTime). EOD/delayed: o last pode ser o fechamento do dia
+    anterior — por isso fica DEPOIS da tabela intraday. changePcr tratado
+    como Δ pp (|Δ| > 5 = dado ruim)."""
+    meta = YIELD_MATS.get(mat)
+    if not meta:
+        raise ValueError(f"vencimento desconhecido: {mat}")
+    html = _http_get(
+        "https://www.investing.com/rates-bonds/" + meta["slug"],
+        {"User-Agent": BROWSER_UA, "Accept-Language": "en-US,en;q=0.9"},
+        timeout=20).decode("utf-8", "replace")
+    mm = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not mm:
+        raise ValueError("página sem __NEXT_DATA__")
+    blk = _inv_price_block(json.loads(mm.group(1)))
+    if not blk:
+        raise ValueError("SSR sem bloco de cotação")
+    y = _to_float(blk.get("last"))
+    if not y or not (YIELD_LO < y < YIELD_HI):
+        raise ValueError("sem preço válido")
+    chg = _to_float(blk.get("changePcr"))
+    if chg is None:
+        lc = _to_float(blk.get("last_close"))
+        chg = (y - lc) if (lc and lc > 0) else None
+    if chg is not None and abs(chg) > 5.0:
+        chg = None
+    return {mat: {"yield": y, "chg_pp": chg,
+                  "src": "Investing.com (instrumento)", "ts": time.time()}}
+
+
+def fetch_yield_inv_hist(mat):
+    """Último degrau: API historical do Investing p/ o vencimento —
+    linha de HOJE entra intraday (pipeline diferente do SSR)."""
+    pts, _src = _hist_yield_api(mat, 6)
+    dt, y = pts[-1]
+    prev = pts[-2][1] if len(pts) >= 2 else None
+    chg = None
+    if prev and y > 0 and abs(y - prev) <= 5.0:
+        chg = round(y - prev, 4)
+    return {mat: {"yield": y, "chg_pp": chg, "day": dt,
+                  "src": "Investing.com (API)", "ts": time.time()}}
+
+
+def fetch_yield_br(sel=None):
+    """Yield nominal do Brasil (LTN/NTN), % a.a., por vencimento. Cadeia
+    (v8.0, cada fonte com cooldown próprio; 429 = falha dupla):
+    Investing-tabela (www) -> Investing-tabela (m.) -> TE 10y (pulado se
+    o vencimento selecionado não é 10a) -> instrumento (venc. selecionado)
+    -> API historical (venc. selecionado) -> cache (a camada de cima
+    mantém). O degrau devolve {venc: rec} só do que tem; a camada de cima
+    mescla (rec fresco substitui o mesmo vencimento). Falha isolada."""
+    sel = sel if sel in YIELD_MATS else YIELD_DEFAULT
+    cands = [
+        ("Inv-table-YIELD", lambda: fetch_yield_inv_table(INV_BR_BONDS_URL)),
+        ("Inv-tableMob-YIELD", lambda: fetch_yield_inv_table(INV_BR_BONDS_URL_M)),
+        ("Inv-instr-YIELD", lambda: fetch_yield_inv_instr(sel)),
+        ("Inv-hist-YIELD", lambda: fetch_yield_inv_hist(sel)),
+    ]
+    if sel == "10a":
+        cands.insert(2, ("TE-YIELD", fetch_yield_te))
+    errs = []
+    for name, fn in cands:
+        if not _src_due(name):
+            errs.append(f"{name}: em cooldown")
+            continue
+        try:
+            r = fn()
+            _src_clear(name)
+            if r:
+                return r
+            errs.append(f"{name}: resposta sem yield")
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            _src_cooldown(name, YIELD_REFETCH, str(e))
+    raise RuntimeError("yield Brasil sem fonte viva (" + "; ".join(errs) + ")")
+
+
+# -------------------- FETCH · YIELD EUA NOMINAL (v8.1) ----------------------
+def _us_yield_mat_of_title(title):
+    """'United States 10-Year' -> '10a' · 'U.S. 20-Year' -> '20a' ·
+    'United States 3-Month' -> '3m'. O vencimento vem do title do <a> da
+    tabela (o 20y é 'U.S. 20-Year' e os demais 'United States N-Year' —
+    os DOIS formatos existem na mesma tabela; e o slug do 20y é 'us-20-
+    year-…' sem os pontos de 'u.s.-…'). Só vale se o vencimento estiver
+    em US_YIELD_MATS (a tabela também lista 2m/4m, fora da curva pedida)."""
+    m = re.search(r"(?:United States|U\.S\.|US)\s+(\d+)\s*-?\s*(Month|Year)",
+                  title or "", re.I)
+    if not m:
+        return None
+    mat = (f"{m.group(1)}m" if m.group(2).lower() == "month"
+           else f"{m.group(1)}a")
+    return mat if mat in US_YIELD_MATS else None
+
+
+def _us_yield_mat_of_row(row):
+    """Vencimento de uma <tr> da tabela: varre TODOS os title="…" do bloco
+    (o 1º costuma ser o da flag 'United States', sem prazo; o do <a> traz
+    'United States 10-Year' ou 'U.S. 20-Year') e, se nenhum title servir,
+    cai pro slug do href ('u.s.-10-year-bond-yield' / 'us-20-year-…')."""
+    for t in re.findall(r'title="([^"]+)"', row or ""):
+        mat = _us_yield_mat_of_title(t)
+        if mat:
+            return mat
+    m = re.search(r'href="[^"]*rates-bonds/([^"]+)"', row or "")
+    if m:
+        return _us_yield_mat_of_title(m.group(1).replace("-", " "))
+    return None
+
+
+def fetch_us_yield_inv_table(url=INV_US_BONDS_URL):
+    """Curva nominal INTEIRA dos EUA na tabela SSR do Investing (GET puro,
+    sem chave): cada <tr id="pair_N"> traz pid-N-last (yield %), pid-N-
+    last_close, pid-N-pc (Δ absoluto — em YIELDS é Δ em pp) e pid-N-time
+    (data epoch do dado). Só linhas 'United States X-Month/Year' cujo
+    vencimento está em US_YIELD_MATS entram (2m/4m da tabela ficam fora);
+    yield fora de US_YIELD_LO..HI é rejeitado."""
+    html = _http_get(url, {"User-Agent": BROWSER_UA,
+                           "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=25).decode("utf-8", "replace")
+    out = {}
+    for mid in re.findall(r'<tr id="pair_(\d+)">', html):
+        s = html.find(f'id="pair_{mid}"')
+        if s < 0:
+            continue
+        e = html.find("</tr>", s)
+        row = html[s:e if e > 0 else s + 4000]
+        mat = _us_yield_mat_of_row(row)
+        if not mat:
+            continue
+        mlast = re.search(rf'pid-{mid}-last">([0-9.]+)<', row)
+        if not mlast:
+            continue
+        y = _to_float(mlast.group(1))
+        if not y or not (US_YIELD_LO < y < US_YIELD_HI):
+            continue
+        mc = re.search(rf'pid-{mid}-pc">([+-]?[0-9.]+)<', row)
+        chg = _to_float(mc.group(1)) if mc else None
+        if chg is not None and abs(chg) > 5.0:
+            chg = None
+        mt2 = re.search(rf'pid-{mid}-time" data-value="(\d+)"', row)
+        dt_lbl = (datetime.fromtimestamp(int(mt2.group(1)), timezone.utc)
+                  .strftime("%H:%M") if mt2 else None)
+        out[mat] = {"yield": y, "chg_pp": chg, "dt": dt_lbl,
+                    "src": "Investing.com", "ts": time.time()}
+    if not out:
+        raise ValueError("Investing: tabela sem yields dos EUA")
+    return out
+
+
+def fetch_us_yield_te(mat):
+    """Degrau do TE p/ um vencimento — SÓ os que têm página própria
+    validados 23/09/2026 (3m/6m/10a/20a/30a; os demais slugs são 404
+    genérico; o 10y vive em 'government-bond-yield', o slug
+    '10-year-bond-yield' também é 404). market_last + market_daily_Pchg;
+    em títulos o Pchg do TE É Δ em PONTOS percentuais (mesma convenção do
+    BR, conferida na descrição deles)."""
+    meta = US_YIELD_MATS.get(mat) or {}
+    te = meta.get("te")
+    if not te:
+        raise ValueError(f"TE sem página do {mat}")
+    html = _http_get(TE_US_YIELD_FMT.format(slug=te),
+                     {"User-Agent": BROWSER_UA,
+                      "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=30).decode("utf-8", "replace")
+    m = re.search(r'id="market_last">\s*([0-9.,]+)\s*<', html)
+    if not m:
+        raise ValueError("TE sem market_last")
+    y = float(m.group(1).replace(",", ""))
+    if not y or not (US_YIELD_LO < y < US_YIELD_HI):
+        raise ValueError("TE sem preço válido")
+    mp = re.search(r'id="market_daily_Pchg"[^>]*>\s*(-?[0-9.,]+)\s*%', html)
+    chg = _to_float(mp.group(1).replace(",", "")) if mp else None
+    if chg is not None and abs(chg) > 5.0:
+        chg = None
+    day = None
+    md = re.search(r"(?:rose|eased|fell|climbed|slid|jumped|gained|dropped|"
+                   r"declined|advanced|rebounded|tumbled|rallied)\s+to\s+"
+                   r"[0-9.,]+%?\s+on\s+([A-Z][a-z]+ \d{1,2}, \d{4})", html)
+    if md:
+        try:
+            day = datetime.strptime(md.group(1), "%B %d, %Y").date().isoformat()
+        except ValueError:
+            pass
+    return {mat: {"yield": y, "chg_pp": chg, "day": day,
+                  "src": "TradingEconomics", "ts": time.time()}}
+
+
+def fetch_us_yield_inv_instr(mat):
+    """Degrau por vencimento: SSR da página do instrumento no Investing
+    (mesmo padrão do CDS v5.8: __NEXT_DATA__ + busca genérica do bloco com
+    last/lastUpdateTime). EOD/delayed: o last pode ser o fechamento do dia
+    anterior — por isso fica DEPOIS da tabela intraday. changePcr tratado
+    como Δ pp (|Δ| > 5 = dado ruim)."""
+    meta = US_YIELD_MATS.get(mat)
+    if not meta:
+        raise ValueError(f"vencimento desconhecido: {mat}")
+    html = _http_get(
+        "https://www.investing.com/rates-bonds/" + meta["slug"],
+        {"User-Agent": BROWSER_UA, "Accept-Language": "en-US,en;q=0.9"},
+        timeout=20).decode("utf-8", "replace")
+    mm = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not mm:
+        raise ValueError("página sem __NEXT_DATA__")
+    blk = _inv_price_block(json.loads(mm.group(1)))
+    if not blk:
+        raise ValueError("SSR sem bloco de cotação")
+    y = _to_float(blk.get("last"))
+    if not y or not (US_YIELD_LO < y < US_YIELD_HI):
+        raise ValueError("sem preço válido")
+    chg = _to_float(blk.get("changePcr"))
+    if chg is None:
+        lc = _to_float(blk.get("last_close"))
+        chg = (y - lc) if (lc and lc > 0) else None
+    if chg is not None and abs(chg) > 5.0:
+        chg = None
+    return {mat: {"yield": y, "chg_pp": chg,
+                  "src": "Investing.com (instrumento)", "ts": time.time()}}
+
+
+def fetch_us_yield_inv_hist(mat):
+    """Degrau: API historical do Investing p/ o vencimento — linha de HOJE
+    entra intraday (pipeline diferente do SSR). Δ = hoje - ontem (pp)."""
+    pts, _src = _hist_us_yield_api(mat, 6)
+    dt, y = pts[-1]
+    prev = pts[-2][1] if len(pts) >= 2 else None
+    chg = None
+    if prev and y > 0 and abs(y - prev) <= 5.0:
+        chg = round(y - prev, 4)
+    return {mat: {"yield": y, "chg_pp": chg, "day": dt,
+                  "src": "Investing.com (API)", "ts": time.time()}}
+
+
+def fetch_us_yield_fred():
+    """Curva nominal INTEIRA dos EUA no FRED (Treasury CMT oficial, EOD):
+    uma chamada fredgraph.csv com as séries DGS* de todos os vencimentos
+    (DGS1MO…DGS30). Δ do dia = último - penúltimo (pp). Completa a curva
+    quando os degraus de vencimento único não cobrem tudo — sem
+    sobrescrever o que já veio fresco deles (ver fetch_us_yield)."""
+    pairs = [(m, US_YIELD_MATS[m]["fred"]) for m in
+             sorted(US_YIELD_MATS, key=lambda k: US_YIELD_MATS[k]["ordem"])
+             if US_YIELD_MATS[m].get("fred")]
+    if not pairs:
+        raise ValueError("sem séries FRED mapeadas")
+    # cosd limita a janela (o CSV completo vem desde 1962 e estoura timeout)
+    url = (FRED_CSV_FMT.format(sid=",".join(s for _m, s in pairs))
+           + "&cosd=" + (datetime.now(timezone.utc) - timedelta(days=15)
+                         ).strftime("%Y-%m-%d"))
+    raw = _http_get(url, {"User-Agent": FRED_UA},
+                    timeout=40).decode("utf-8", "replace")
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if len(lines) < 3:
+        raise ValueError("FRED sem série")
+    col = {h.strip(): i for i, h in enumerate(lines[0].split(","))}
+    last, prev = {}, {}                 # sid -> (dt, v)
+    for ln in lines[1:]:
+        parts = ln.split(",")
+        dt = parts[0].strip()
+        for _mat, sid in pairs:
+            i = col.get(sid)
+            if i is None or i >= len(parts):
+                continue
+            val = parts[i].strip()
+            if not val or val == ".":
+                continue
+            v = _to_float(val)
+            if not v or not (US_YIELD_LO < v < US_YIELD_HI):
+                continue
+            if sid in last:
+                prev[sid] = last[sid]
+            last[sid] = (dt, v)
+    out = {}
+    for mat, sid in pairs:
+        if sid not in last:
+            continue
+        dt, y = last[sid]
+        chg = None
+        if sid in prev:
+            chg = round(y - prev[sid][1], 4)
+            if abs(chg) > 5.0:
+                chg = None
+        out[mat] = {"yield": y, "chg_pp": chg, "day": dt,
+                    "src": "FRED", "ts": time.time()}
+    if not out:
+        raise ValueError("FRED sem yields dos EUA")
+    return out
+
+
+def fetch_us_yield(sel=None):
+    """Yield nominal dos EUA (UST: bills ≤1a, notes 2-10a, bonds 20-30a),
+    % a.a., por vencimento. Cadeia (v8.1, cada fonte com cooldown próprio;
+    429 = falha dupla; nomes com prefixo US p/ não colidir com o BR):
+    Investing-tabela (www) -> Investing-tabela (m.) -> TE (só se o
+    vencimento selecionado tiver página) -> instrumento -> API historical
+    -> FRED (curva inteira, completa sem sobrescrever) -> cache (a camada
+    de cima mantém). Tabela e FRED devolvem a curva inteira; os degraus
+    de vencimento único devolvem só o selecionado (a camada de cima
+    mescla). Falha isolada das demais seções."""
+    sel = sel if sel in US_YIELD_MATS else US_YIELD_DEFAULT
+    errs = []
+
+    def _try(name, fn):
+        if not _src_due(name):
+            errs.append(f"{name}: em cooldown")
+            return None
+        try:
+            r = fn()
+            _src_clear(name)
+            return r or None
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            _src_cooldown(name, US_YIELD_REFETCH, str(e))
+            return None
+
+    # 1-2: curva inteira intraday
+    r = _try("Inv-table-USYIELD",
+             lambda: fetch_us_yield_inv_table(INV_US_BONDS_URL))
+    if r:
+        return r
+    r = _try("Inv-tableMob-USYIELD",
+             lambda: fetch_us_yield_inv_table(INV_US_BONDS_URL_M))
+    if r:
+        return r
+
+    # 3-5: vencimento selecionado (intraday-ish)
+    got = {}
+    if (US_YIELD_MATS.get(sel) or {}).get("te"):
+        r = _try("TE-USYIELD", lambda: fetch_us_yield_te(sel))
+        if r:
+            got.update(r)
+    if sel not in got:
+        r = _try("Inv-instr-USYIELD", lambda: fetch_us_yield_inv_instr(sel))
+        if r:
+            got.update(r)
+    if sel not in got:
+        r = _try("Inv-hist-USYIELD", lambda: fetch_us_yield_inv_hist(sel))
+        if r:
+            got.update(r)
+
+    # 6: FRED completa a curva (EOD) sem sobrescrever o fresco
+    r = _try("FRED-USYIELD", fetch_us_yield_fred)
+    if r:
+        for m, rec in r.items():
+            got.setdefault(m, rec)
+
+    if got:
+        return got
+    raise RuntimeError("yield EUA sem fonte viva (" + "; ".join(errs) + ")")
+
 def collect_china(last):
     """REMOVIDO a pedido do usuário (2026-09-17): China/COMEX desativados.
     Mantém apenas o FX (necessário p/ derivar o BRL). Não busca Sina,
@@ -3648,6 +4391,320 @@ def x11_set_below_state(root, add=True):
     except Exception as e:
         log(f"falha ao ajustar _NET_WM_STATE_BELOW: {e}")
         return False
+
+# -------------------- BANDEJA DO SISTEMA (v8.3) --------------------
+# System tray via AyatanaAppIndicator3 (GI, pacote do sistema
+# gir1.2-ayatana-appindicator3 — zero dependência pip nova).
+#
+# Decisões do usuário (nada aqui é chute):
+#   * biblioteca: Ayatana GI do sistema (pystray NEM é tentado).
+#   * minimizar: SÓ via item de menu "Minimizar p/ bandeja"; o X/Sair
+#     continua encerrando o processo.
+#   * clique no ícone: o Ayatana no GNOME SEMPRE abre o menu (não há
+#     sinal de clique-esquerdo para interceptar — validado no ambiente);
+#     mostrar/esconder vive no item "Mostrar/Ocultar" do menu da bandeja.
+#   * menu da bandeja: Mostrar/Ocultar + Atualizar agora + Ver gráfico
+#     (mesmas entradas da janela) + Sair.
+#   * ícone: círculo dourado gerado com Pillow em TRAY_ICON_FILE, com
+#     fallback para ícone do tema quando o Pillow/geração falhar.
+#   * label ao lado do ícone: spot em BRL (R$/g, igual ao widget);
+#     USD temporário SÓ se todos os fallbacks do BRL falharem;
+#     título/tooltip: BRL + USD (BRL primeiro).
+#   * polling/cache/log: seguem rodando com a janela oculta (nada pausa).
+#   * boot: SEMPRE inicia minimizado; --show inicia visível (fuga/debug).
+#   * falha do Ayatana: NUNCA quebra o app — loga e segue visível como
+#     antes; o item de menu vira no-op seguro.
+#
+# Thread-safety: callbacks Gtk rodam na thread do GLib — NUNCA tocam o
+# tkinter direto; tudo é despachado para a thread do Tk via root.after(0).
+_TRAY_ID = "gold-widget"
+
+def _tray_icon_path():
+    """Caminho do ícone da bandeja; gera o PNG dourado se preciso.
+
+    Retorna (path_ou_nome, eh_arquivo). Nunca levanta: em qualquer
+    falha devolve um nome de ícone do tema.
+    """
+    fallback = ("dialog-information", False)
+    try:
+        p = TRAY_ICON_FILE
+        try:
+            # PNG válido = existe, tem tamanho E abre como imagem (um
+            # arquivo corrompido/antigo nunca passa daqui: cai na
+            # regeneração abaixo em vez de quebrar o indicador).
+            if os.path.isfile(p) and os.path.getsize(p) > 100:
+                try:
+                    from PIL import Image as _VImg
+                    with _VImg.open(p) as _v:
+                        _v.verify()
+                    return (p, True)
+                except Exception:
+                    pass  # corrompido ou Pillow ausente: regenera/usa tema
+        except Exception:
+            pass
+        try:
+            from PIL import Image, ImageDraw
+        except Exception as e:
+            log(f"bandeja: Pillow indisponível ({e}); usando ícone do tema")
+            return fallback
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            size = 64
+            img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            # círculo dourado com borda escura + brilho simples
+            d.ellipse([4, 4, size - 5, size - 5], fill=(201, 162, 39, 255),
+                      outline=(90, 66, 10, 255), width=3)
+            d.ellipse([14, 12, size - 22, size - 28], fill=(240, 210, 110, 255))
+            tmp = p + ".tmp"
+            img.save(tmp, "PNG")
+            os.replace(tmp, p)
+            return (p, True)
+        except Exception as e:
+            log(f"bandeja: falha ao gerar ícone ({e}); usando ícone do tema")
+            return fallback
+    except Exception as e:
+        log(f"bandeja: falha inesperada no ícone ({e})")
+        return fallback
+
+def _tray_label_and_title(last):
+    """(label, titulo) da bandeja a partir do cache. Nunca levanta.
+
+    v8.4: o LABEL é em BRL (R$/g, "R$ 714,32/g", igual ao widget). O USD
+    só aparece no label se LITERALMENTE todos os fallbacks do BRL
+    falharem (sem brl_price no cache): aí mostra o USD temporário
+    ("US$ 4,266.16") até o BRL voltar. O TÍTULO/tooltip mantém os dois,
+    com o BRL primeiro ("R$ 714,32/g · US$ 4,266.16").
+    """
+    try:
+        d = last or {}
+        usd = d.get("usd_price")
+        brl = d.get("brl_price")
+        if brl:
+            try:
+                label = f"R$ {fmt_brl(brl / TROY_OZ_GRAMS)}/g"
+            except Exception:
+                label = f"R$ {brl}/g"
+        elif usd:
+            # Último recurso: BRL sem dado (todos os fallbacks do BRL
+            # falharam). Mostra USD temporário até o BRL voltar.
+            try:
+                label = f"US$ {fmt_usd(usd)}"
+            except Exception:
+                label = f"US$ {usd}"
+        else:
+            label = "Ouro —"
+        parts = []
+        if brl:
+            try:
+                parts.append(f"R$ {fmt_brl(brl / TROY_OZ_GRAMS)}/g")
+            except Exception:
+                parts.append(f"R$ {brl}/g")
+        if usd:
+            try:
+                parts.append(f"US$ {fmt_usd(usd)}")
+            except Exception:
+                parts.append(f"US$ {usd}")
+        title = "OuroWidget — " + (" · ".join(parts) if parts else "sem dados ainda")
+        return (label, title)
+    except Exception:
+        return ("Ouro —", "OuroWidget")
+
+def _tray_load_gi():
+    """Importa AyatanaAppIndicator3+Gtk+GLib via GI. (mod, erro)."""
+    try:
+        import gi as _gi
+        _gi.require_version("AyatanaAppIndicator3", "0.1")
+        _gi.require_version("Gtk", "3.0")
+        from gi.repository import (  # noqa: F401
+            AyatanaAppIndicator3 as _AI, Gtk as _Gtk, GLib as _GLib)
+        return (_AI, _Gtk, _GLib), None
+    except Exception as e:
+        return None, e
+
+class TrayController:
+    """Dono do AppIndicator + menu Gtk. Toda ação chega ao app via
+    callbacks seguros (root.after) — este objeto nunca toca tkinter."""
+
+    def __init__(self, app):
+        self.app = app
+        self.AI = None
+        self.Gtk = None
+        self.GLib = None
+        self.ind = None
+        self.item_toggle = None
+        self.ok = False
+
+    def start(self):
+        """Cria o indicador. Retorna True se a bandeja está viva."""
+        try:
+            mods, err = _tray_load_gi()
+            if mods is None:
+                log(f"bandeja indisponível (GI Ayatana: {err}); sem tray")
+                return False
+            AI, Gtk, GLib = mods
+            self.AI, self.Gtk, self.GLib = AI, Gtk, GLib
+            icon, is_file = _tray_icon_path()
+            try:
+                if is_file:
+                    self.ind = AI.Indicator.new_with_path(
+                        _TRAY_ID, os.path.basename(icon),
+                        AI.IndicatorCategory.APPLICATION_STATUS,
+                        os.path.dirname(icon) or STATE_DIR)
+                else:
+                    self.ind = AI.Indicator.new(
+                        _TRAY_ID, icon,
+                        AI.IndicatorCategory.APPLICATION_STATUS)
+            except Exception as e:
+                log(f"bandeja: falha ao criar indicador ({e})")
+                return False
+            try:
+                label0, title0 = _tray_label_and_title(
+                    getattr(self.app, "last", None))
+                try:
+                    self.ind.set_title(title0)
+                except Exception:
+                    pass
+                try:
+                    self.ind.set_label(label0, label0)
+                except Exception:
+                    pass
+                self.ind.set_status(AI.IndicatorStatus.ACTIVE)
+            except Exception as e:
+                log(f"bandeja: falha ao configurar indicador ({e})")
+                return False
+            try:
+                self.ind.set_menu(self._build_menu())
+            except Exception as e:
+                log(f"bandeja: falha ao anexar menu ({e})")
+                return False
+            self.ok = True
+            log("bandeja ativa (AyatanaAppIndicator3)")
+            return True
+        except Exception as e:
+            log(f"bandeja: falha inesperada ao iniciar ({e})")
+            self.ok = False
+            return False
+
+    def _build_menu(self):
+        Gtk = self.Gtk
+        menu = Gtk.Menu()
+
+        self.item_toggle = Gtk.MenuItem(label="Mostrar")
+        self.item_toggle.connect("activate", self._on_toggle)
+        menu.append(self.item_toggle)
+
+        mi_upd = Gtk.MenuItem(label="Atualizar agora")
+        mi_upd.connect("activate", self._on_update_now)
+        menu.append(mi_upd)
+
+        mi_graph = Gtk.MenuItem(label="Ver gráfico")
+        submenu = Gtk.Menu()
+        try:
+            entries = list(self.app.tray_graph_entries())
+        except Exception:
+            entries = []
+        if not entries:
+            _none = Gtk.MenuItem(label="(indisponível)")
+            _none.set_sensitive(False)
+            submenu.append(_none)
+        else:
+            for lbl, key in entries:
+                mi = Gtk.MenuItem(label=lbl)
+                mi.connect("activate", self._on_graph, key)
+                submenu.append(mi)
+        mi_graph.set_submenu(submenu)
+        menu.append(mi_graph)
+
+        sep = Gtk.SeparatorMenuItem()
+        menu.append(sep)
+
+        mi_quit = Gtk.MenuItem(label="Sair")
+        mi_quit.connect("activate", self._on_quit)
+        menu.append(mi_quit)
+
+        menu.show_all()
+        self._refresh_toggle_label()
+        return menu
+
+    # -- callbacks Gtk (thread GLib) -> despacha p/ thread do Tk ---------
+    def _tk(self, fn):
+        try:
+            root = getattr(self.app, "root", None)
+            if root is not None:
+                root.after(0, fn)
+            else:
+                fn()
+        except Exception:
+            try:
+                fn()
+            except Exception:
+                pass
+
+    def _on_toggle(self, _item):
+        self._tk(self.app.toggle_visible)
+
+    def _on_update_now(self, _item):
+        self._tk(self.app.update_now)
+
+    def _on_graph(self, _item, key):
+        self._tk(lambda: self.app.open_history(key))
+
+    def _on_quit(self, _item):
+        self._tk(self.app.quit)
+
+    # -- updates vindos da thread do Tk ----------------------------------
+    def _refresh_toggle_label(self):
+        try:
+            if self.item_toggle is None:
+                return
+            vis = bool(self.app.is_visible())
+            self.item_toggle.set_label("Ocultar" if vis else "Mostrar")
+        except Exception:
+            pass
+
+    def refresh(self):
+        """Atualiza label/título + rótulo Mostrar/Ocultar. Nunca levanta;
+        quando chamada fora da thread GLib, reagenda via idle_add."""
+        try:
+            if not self.ok or self.ind is None:
+                return
+            GLib = self.GLib
+
+            def _do():
+                try:
+                    label, title = _tray_label_and_title(
+                        getattr(self.app, "last", None))
+                    try:
+                        self.ind.set_title(title)
+                    except Exception:
+                        pass
+                    try:
+                        self.ind.set_label(label, label)
+                    except Exception:
+                        pass
+                    self._refresh_toggle_label()
+                except Exception as e:
+                    log(f"bandeja: falha no refresh ({e})")
+                return False
+
+            try:
+                GLib.idle_add(_do)
+            except Exception:
+                _do()
+        except Exception as e:
+            log(f"bandeja: falha inesperada no refresh ({e})")
+
+    def stop(self):
+        try:
+            if self.ind is not None and self.AI is not None:
+                try:
+                    self.ind.set_status(self.AI.IndicatorStatus.PASSIVE)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self.ok = False
 
 # -------------------- POPUP DE GRAFICO (v6.0, Canvas puro) --------------------
 if tk is not None:
@@ -3997,6 +5054,30 @@ class GoldWidget:
                                   font=("DejaVu Sans", 7))
         self.l_cds_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
+        # ------------- seção BRASIL · YIELD NOMINAL (v8.0) -----------------
+        # UMA linha (vencimento escolhido no DROPDOWN ▾) + rodapé com a
+        # curva inteira. O vencimento fica no dropdown, não em linhas
+        # separadas, p/ não inflar o widget.
+        self.yield_frame = tk.Frame(self.body, bg=BG)
+        self.yield_frame.pack(anchor="w", padx=12, fill="x")
+        self._yield_sig = None
+        self._yield_refs = []
+        self.l_yield_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
+                                    font=("DejaVu Sans", 7))
+        self.l_yield_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
+        # ------------- seção EUA · YIELD TREASURY (v8.1) --------------------
+        # Espelha o yield BR: UMA linha (vencimento no DROPDOWN ▾) + rodapé
+        # com a curva inteira. Bills/notes/bonds misturados como no
+        # noticiário, com o tipo no nome. Posição: logo abaixo do BR.
+        self.us_yield_frame = tk.Frame(self.body, bg=BG)
+        self.us_yield_frame.pack(anchor="w", padx=12, fill="x")
+        self._us_yield_sig = None
+        self._us_yield_refs = []
+        self.l_us_yield_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
+                                       font=("DejaVu Sans", 7))
+        self.l_us_yield_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
         # --------------- seção NYMEX · DIESEL HO=F (v6.1) -----------------
         self.ho_frame = tk.Frame(self.body, bg=BG)
         self.ho_frame.pack(anchor="w", padx=12, fill="x")
@@ -4063,6 +5144,38 @@ class GoldWidget:
         # ----------------------- menu de botão direito ----------------------
         self.menu = tk.Menu(root, tearoff=0)
         self.menu.add_command(label="Atualizar agora", command=self.update_now)
+        # dropdown do vencimento do yield (v8.0): radiobuttons; a escolha
+        # persiste no cache e o rótulo da linha acompanha
+        _ysel0 = self.last.get("yield_sel")
+        if _ysel0 not in YIELD_MATS:
+            _ysel0 = YIELD_DEFAULT
+        self._yield_sel_var = tk.StringVar(value=_ysel0)
+        try:
+            self.menu_yield = tk.Menu(root, tearoff=0)
+            for _mat in sorted(YIELD_MATS,
+                               key=lambda k: YIELD_MATS[k]["ordem"]):
+                self.menu_yield.add_radiobutton(
+                    label=YIELD_MATS[_mat]["nome"], value=_mat,
+                    variable=self._yield_sel_var,
+                    command=self._set_yield_mat)
+        except Exception:
+            self.menu_yield = None
+        # dropdown do vencimento do yield EUA (v8.1): radiobuttons com o
+        # tipo (bill/note/bond) no nome; a escolha persiste no cache
+        _uysel0 = self.last.get("us_yield_sel")
+        if _uysel0 not in US_YIELD_MATS:
+            _uysel0 = US_YIELD_DEFAULT
+        self._us_yield_sel_var = tk.StringVar(value=_uysel0)
+        try:
+            self.menu_us_yield = tk.Menu(root, tearoff=0)
+            for _mat in sorted(US_YIELD_MATS,
+                               key=lambda k: US_YIELD_MATS[k]["ordem"]):
+                self.menu_us_yield.add_radiobutton(
+                    label=US_YIELD_MATS[_mat]["nome"], value=_mat,
+                    variable=self._us_yield_sel_var,
+                    command=self._set_us_yield_mat)
+        except Exception:
+            self.menu_us_yield = None
         try:
             gmenu = tk.Menu(self.menu, tearoff=0)
             for _lbl, _hk in (
@@ -4083,6 +5196,18 @@ class GoldWidget:
                     ("Enxofre (spot CN)", "sulfur")):
                 gmenu.add_command(label=_lbl,
                                   command=lambda k=_hk: self.open_history(k))
+            gmenu.add_command(
+                label="Yield nominal Brasil (venc. atual)",
+                command=lambda: self.open_history(
+                    "br_yield:" + (self._yield_sel_var.get()
+                                   if self._yield_sel_var.get() in YIELD_MATS
+                                   else YIELD_DEFAULT)))
+            gmenu.add_command(
+                label="Yield Treasury EUA (venc. atual)",
+                command=lambda: self.open_history(
+                    "us_yield:" + (self._us_yield_sel_var.get()
+                                   if self._us_yield_sel_var.get() in US_YIELD_MATS
+                                   else US_YIELD_DEFAULT)))
             self.menu.add_cascade(label="Ver grafico", menu=gmenu)
         except Exception:
             pass
@@ -4090,6 +5215,7 @@ class GoldWidget:
                                   variable=self.var_top,
                                   command=self._toggle_top)
         self.menu.add_command(label="Encostar no canto", command=self.snap_corner)
+        self.menu.add_command(label="Minimizar p/ bandeja", command=self.hide_to_tray)
         self.menu.add_separator()
         self.menu.add_command(label="Sair", command=self.quit)
 
@@ -4109,6 +5235,8 @@ class GoldWidget:
                           (self.l_usdbrl, None),
                           (self.l_copper_sub, None),
                          (self.l_us_sub, None), (self.l_cds_sub, None),
+                          (self.l_yield_sub, None),
+                          (self.l_us_yield_sub, None),
                          (self.l_ho_sub, None), (self.l_brent_sub, None),
                          (self.l_sc_sub, None),
                          (self.l_murban_sub, None),
@@ -4191,6 +5319,53 @@ class GoldWidget:
         # mostra último preço conhecido enquanto não chega dado novo
         self._render()
 
+        # ---------------- v8.3: bandeja (sempre inicia minimizado) -------
+        # O usuário pediu boot SEMPRE oculto; --show inicia visível (fuga).
+        # Se a bandeja falhar, NUNCA some: segue visível como antes.
+        self._visible = True
+        self._tray = None
+        self._tray_ok = False
+        self._tray_refresh_job = None
+        start_hidden = "--show" not in sys.argv
+        try:
+            self._tray = TrayController(self)
+            self._tray_ok = bool(self._tray.start())
+        except Exception as e:
+            log(f"bandeja: exceção ao iniciar ({e}); seguindo sem tray")
+            self._tray = None
+            self._tray_ok = False
+        if self._tray_ok and start_hidden:
+            try:
+                self.hide_to_tray(silent=True)
+            except Exception as e:
+                log(f"bandeja: falha ao ocultar no boot ({e})")
+        if self._tray_ok:
+            try:
+                self._tray.refresh()
+            except Exception:
+                pass
+            try:
+                self._tray_refresh_job = self.root.after(
+                    5000, self._tray_refresh_tick)
+            except Exception:
+                pass
+        else:
+            log("bandeja inativa; widget segue visível (fallback seguro)")
+        if start_hidden and self._tray_ok:
+            log("boot minimizado na bandeja (v8.3)")
+        elif "--show" in sys.argv:
+            log("boot visível (--show)")
+
+        # v8.3.2 (a pedido do usuário): o X da janela NÃO encerra — minimiza
+        # p/ a bandeja (igual "Minimizar p/ bandeja"). Sem bandeja ativa,
+        # encerra de verdade (exit 0; com Restart=on-failure o systemd NÃO
+        # relança — só relança em crash). O Sair (bandeja e janela) segue
+        # chamando quit() e encerrando de verdade.
+        try:
+            root.protocol("WM_DELETE_WINDOW", self._on_close_window)
+        except Exception as e:
+            log(f"aviso: WM_DELETE_WINDOW não registrado ({e})")
+
         # thread de atualização em background
         self._poller = threading.Thread(target=self._poll_loop, daemon=True)
         self._poller.start()
@@ -4263,6 +5438,22 @@ class GoldWidget:
             return {"title": f"{key.split(':', 1)[1]} (R$/g) · ref. SGE",
                     "fmt": lambda v: f"R$ {fmt_brl(v)}/g",
                     "yfmt": lambda v: fmt_brl(v).split(",")[0],
+                    "ranges": (7, 30, 90, 180, 365)}
+        if key.startswith("br_yield:"):
+            mat = key.split(":", 1)[1]
+            meta = YIELD_MATS.get(mat) or {}
+            lbl = meta.get("nome") or mat
+            return {"title": f"Brasil · Yield nominal {lbl} (% a.a.)",
+                    "fmt": lambda v: f"{fmt_yield(v)}%",
+                    "yfmt": lambda v: f"{v:.2f}".replace(".", ","),
+                    "ranges": (7, 30, 90, 180, 365)}
+        if key.startswith("us_yield:"):
+            mat = key.split(":", 1)[1]
+            meta = US_YIELD_MATS.get(mat) or {}
+            lbl = meta.get("nome") or mat
+            return {"title": f"EUA · Yield nominal {lbl} (% a.a.)",
+                    "fmt": lambda v: f"{fmt_yield(v)}%",
+                    "yfmt": lambda v: f"{v:.2f}".replace(".", ","),
                     "ranges": (7, 30, 90, 180, 365)}
         m = HIST_META.get(key)
         if m:
@@ -4612,6 +5803,64 @@ class GoldWidget:
             self.last.pop("cds_br", None)
             log("CDS Brasil: cache >7 dias sem fonte; removido")
 
+        # ---- Brasil · Yield nominal (v8.0): refetch no máx. 1/15min;
+        #      cadeia Investing-tabela (www/m.) -> TE 10y -> instrumento ->
+        #      API historical -> cache; MESCLA por vencimento (rec fresco
+        #      substitui o mesmo vencimento, os outros ficam de cache);
+        #      falha isolada das demais seções ----
+        _ysel = self.last.get("yield_sel")
+        if _ysel not in YIELD_MATS:
+            _ysel = YIELD_DEFAULT
+        yb = self.last.get("br_yield")
+        if _due("yield", yb, YIELD_REFETCH):
+            try:
+                got = fetch_yield_br(_ysel)
+                merged = dict((yb or {}).get("curve") or {})
+                merged.update({m: r for m, r in got.items() if r.get("yield")})
+                self.last["br_yield"] = {"curve": merged}
+                _cooldown_clear("yield")
+            except Exception as e:
+                log(f"yield Brasil indisponível ({e}); mantendo cache")
+                _cooldown("yield", YIELD_REFETCH, str(e))
+        yb = self.last.get("br_yield")
+        if yb:
+            keep = {m: r for m, r in (yb.get("curve") or {}).items()
+                    if time.time() - r.get("ts", 0) <= YIELD_MAX_AGE}
+            if keep:
+                yb["curve"] = keep
+            else:
+                self.last.pop("br_yield", None)
+                log("yield Brasil: cache >4 dias sem fonte; removido")
+
+        # ---- EUA · Yield Treasury (v8.1): refetch no máx. 1/15min;
+        #      cadeia Investing-tabela (www/m.) -> TE -> instrumento ->
+        #      API historical -> FRED (completa a curva) -> cache;
+        #      MESCLA por vencimento (rec fresco substitui o mesmo
+        #      vencimento, os outros ficam de cache); falha isolada ----
+        _uysel = self.last.get("us_yield_sel")
+        if _uysel not in US_YIELD_MATS:
+            _uysel = US_YIELD_DEFAULT
+        uy = self.last.get("us_yield")
+        if _due("us_yield", uy, US_YIELD_REFETCH):
+            try:
+                got = fetch_us_yield(_uysel)
+                merged = dict((uy or {}).get("curve") or {})
+                merged.update({m: r for m, r in got.items() if r.get("yield")})
+                self.last["us_yield"] = {"curve": merged}
+                _cooldown_clear("us_yield")
+            except Exception as e:
+                log(f"yield EUA indisponível ({e}); mantendo cache")
+                _cooldown("us_yield", US_YIELD_REFETCH, str(e))
+        uy = self.last.get("us_yield")
+        if uy:
+            keep = {m: r for m, r in (uy.get("curve") or {}).items()
+                    if time.time() - r.get("ts", 0) <= US_YIELD_MAX_AGE}
+            if keep:
+                uy["curve"] = keep
+            else:
+                self.last.pop("us_yield", None)
+                log("yield EUA: cache >4 dias sem fonte; removido")
+
         # ---- NYMEX · Diesel HO=F (v6.1): refetch no máx. 1/5min; falha
         #      isolada (Yahoo -> FXEmpire -> TradingEconomics -> cache) ----
         ho = self.last.get("ho_fut")
@@ -4834,6 +6083,12 @@ class GoldWidget:
             _cds = _L.get("cds_br") or {}
             if _cds.get("bps"):
                 log_hist_point(_H, "cds_5y", _cds["bps"])
+            for _ym, _yr in ((_L.get("br_yield") or {}).get("curve") or {}).items():
+                if _yr.get("yield"):
+                    log_hist_point(_H, f"br_yield:{_ym}", _yr["yield"])
+            for _ym, _yr in ((_L.get("us_yield") or {}).get("curve") or {}).items():
+                if _yr.get("yield"):
+                    log_hist_point(_H, f"us_yield:{_ym}", _yr["yield"])
             _ho = _L.get("ho_fut") or {}
             if _ho.get("price"):
                 log_hist_point(_H, "ho_f", _ho["price"])
@@ -4865,6 +6120,10 @@ class GoldWidget:
         self.root.after(0, self._set_spot_offline,
                         not (usd_ok or brl_ok))
         self.root.after(0, self._render)
+        try:
+            self.root.after(0, self._tray_refresh_soon)
+        except Exception:
+            pass
         return retry
 
     def _poll_loop(self):
@@ -4877,6 +6136,14 @@ class GoldWidget:
             else:
                 wait = POLL_SECONDS + random.uniform(0, 10)  # v6.4: jitter
             self.stop.wait(wait)
+
+    def _tray_refresh_soon(self):
+        """Refresh da bandeja após novo ciclo (label/título). Nunca levanta."""
+        try:
+            if getattr(self, "_tray_ok", False) and self._tray is not None:
+                self._tray.refresh()
+        except Exception:
+            pass
 
     # ----------------------------- exibição -------------------------------
     def _set_spot_offline(self, off):
@@ -4933,6 +6200,14 @@ class GoldWidget:
         self._render_cds()
         self._render_cds_sub()
 
+        # seção BRASIL · yield nominal (v8.0)
+        self._render_yield()
+        self._render_yield_sub()
+
+        # seção EUA · yield Treasury (v8.1)
+        self._render_us_yield()
+        self._render_us_yield_sub()
+
         # seção NYMEX · diesel HO=F (v6.1)
         self._render_ho()
         self._render_ho_sub()
@@ -4964,6 +6239,14 @@ class GoldWidget:
         # re-encosta no canto com a largura real (a menos que o user arrastou)
         if not self._user_moved:
             self.snap_corner()
+
+        # v8.4: a bandeja acompanha o widget — todo _render (que roda na
+        # thread do Tk após cada poll via _poll_once_impl) também empurra
+        # o label/título BRL para a barra de notificações.
+        try:
+            self._tray_refresh_soon()
+        except Exception:
+            pass
 
     def _render_sub(self):
         data = self.last
@@ -5302,6 +6585,264 @@ class GoldWidget:
             if age > CDS_POLL_SECONDS * 2:
                 parts.append("(cache)")
         self.l_cds_sub.config(text=" · ".join(parts), fg=TXT_DIM)
+
+    # ------------- exibição · seção BRASIL · YIELD NOMINAL (v8.0) ----------
+    def _yield_rows(self):
+        """1ª linha = vencimento do dropdown; vencimento sem dado local
+        ainda mostra a linha com '—' (o dropdown continua acessível)."""
+        d = self.last.get("br_yield") or {}
+        curve = d.get("curve") or {}
+        sel = self._yield_sel_var.get()
+        if sel not in YIELD_MATS:
+            sel = YIELD_DEFAULT
+        rows = []
+        if curve:
+            rows.append((("h", "── BRASIL · YIELD GOVERNO (NOMINAL) ──"),
+                         None, None))
+            rec = curve.get(sel) or {}
+            nome = f"Yield nominal (LTN/NTN) · {sel}"
+            if rec.get("ts") and time.time() - rec["ts"] > YIELD_REFETCH * 2:
+                nome += " · (cache)"
+            rows.append((("r", nome),
+                         (f"{fmt_yield(rec['yield'])}%" if rec.get("yield")
+                          else "—"),
+                         rec.get("chg_pp")))
+        return rows
+
+    def _render_yield(self):
+        rows = self._yield_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._yield_sig:
+            for w in self.yield_frame.winfo_children():
+                w.destroy()
+            self._yield_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.yield_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._yield_refs.append(("h", lab))
+                else:
+                    sel = (self._yield_sel_var.get()
+                           if self._yield_sel_var.get() in YIELD_MATS
+                           else YIELD_DEFAULT)
+                    ln = tk.Label(self.yield_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.yield_frame, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.yield_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    dd = tk.Button(self.yield_frame, text="▾", bg=BG,
+                                   fg=TXT_BRL, font=("DejaVu Sans", 8, "bold"),
+                                   bd=0, highlightthickness=0,
+                                   activebackground=BG, activeforeground=TXT_BRL,
+                                   cursor="hand2", padx=2, pady=0,
+                                   command=self._open_yield_menu)
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    dd.grid(row=grid, column=3, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, f"br_yield:{sel}")
+                    self._yield_refs.append(("r", ln, lp, lv, dd))
+                grid += 1
+            self.yield_frame.columnconfigure(0, weight=1)
+            self._yield_sig = sig
+
+        for ref, r in zip(self._yield_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, chg = r[1], r[2]
+            lp.config(text=price_str, fg=TXT_USD)
+            if chg is None:
+                lv.config(text="")
+            else:
+                lv.config(text=f"{fmt_pct(chg)[:1]} {fmt_pp(chg)}",
+                          fg=UP_COLOR if chg >= 0 else DOWN_COLOR)
+
+    def _open_yield_menu(self):
+        if not self.menu_yield:
+            return
+        try:
+            self.menu_yield.tk_popup(self.root.winfo_pointerx(),
+                                     self.root.winfo_pointery())
+        finally:
+            try:
+                self.menu_yield.grab_release()
+            except Exception:
+                pass
+
+    def _set_yield_mat(self):
+        mat = self._yield_sel_var.get()
+        if mat not in YIELD_MATS:
+            return
+        self.last["yield_sel"] = mat
+        save_cache(self.last)
+        self._render()
+
+    def _render_yield_sub(self):
+        d = self.last.get("br_yield") or {}
+        curve = d.get("curve") or {}
+        parts = []
+        if curve:
+            sel = self._yield_sel_var.get()
+            if sel not in YIELD_MATS:
+                sel = YIELD_DEFAULT
+            rec = curve.get(sel) or {}
+            if rec.get("ts"):
+                parts.append(f"{rec.get('src', '?')} há "
+                             f"{max(0, int(time.time() - rec['ts']))}s")
+            else:
+                newest = max((r.get("ts", 0) for r in curve.values()), default=0)
+                if newest:
+                    src = next((r.get("src", "?") for r in curve.values()
+                                if r.get("ts") == newest), "?")
+                    parts.append(f"{src} há {max(0, int(time.time() - newest))}s")
+            items = []
+            for mat in sorted(YIELD_MATS, key=lambda k: YIELD_MATS[k]["ordem"]):
+                r = curve.get(mat)
+                if r and r.get("yield"):
+                    items.append(f"{mat} {r['yield']:.2f}%".replace(".", ","))
+            if items:
+                parts.append("curva " + " · ".join(items))
+        self.l_yield_sub.config(text="  ·  ".join(parts), fg=TXT_DIM)
+
+    # ------------- exibição · seção EUA · YIELD TREASURY (v8.1) -----------
+    def _us_yield_rows(self):
+        """1ª linha = vencimento do dropdown (nome c/ bill/note/bond);
+        vencimento sem dado local ainda mostra a linha com '—' (o dropdown
+        continua acessível)."""
+        d = self.last.get("us_yield") or {}
+        curve = d.get("curve") or {}
+        sel = self._us_yield_sel_var.get()
+        if sel not in US_YIELD_MATS:
+            sel = US_YIELD_DEFAULT
+        rows = []
+        if curve:
+            rows.append((("h", "── EUA · YIELD GOVERNO (TREASURY) ──"),
+                         None, None))
+            rec = curve.get(sel) or {}
+            nome = (f"Yield nominal (UST) · "
+                    f"{US_YIELD_MATS[sel]['nome']}")
+            if rec.get("ts") and time.time() - rec["ts"] > US_YIELD_REFETCH * 2:
+                nome += " · (cache)"
+            rows.append((("r", nome),
+                         (f"{fmt_yield(rec['yield'])}%" if rec.get("yield")
+                          else "—"),
+                         rec.get("chg_pp")))
+        return rows
+
+    def _render_us_yield(self):
+        rows = self._us_yield_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._us_yield_sig:
+            for w in self.us_yield_frame.winfo_children():
+                w.destroy()
+            self._us_yield_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.us_yield_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._us_yield_refs.append(("h", lab))
+                else:
+                    sel = (self._us_yield_sel_var.get()
+                           if self._us_yield_sel_var.get() in US_YIELD_MATS
+                           else US_YIELD_DEFAULT)
+                    ln = tk.Label(self.us_yield_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.us_yield_frame, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.us_yield_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    dd = tk.Button(self.us_yield_frame, text="▾", bg=BG,
+                                   fg=TXT_BRL, font=("DejaVu Sans", 8, "bold"),
+                                   bd=0, highlightthickness=0,
+                                   activebackground=BG, activeforeground=TXT_BRL,
+                                   cursor="hand2", padx=2, pady=0,
+                                   command=self._open_us_yield_menu)
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    dd.grid(row=grid, column=3, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, f"us_yield:{sel}")
+                    self._us_yield_refs.append(("r", ln, lp, lv, dd))
+                grid += 1
+            self.us_yield_frame.columnconfigure(0, weight=1)
+            self._us_yield_sig = sig
+
+        for ref, r in zip(self._us_yield_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, chg = r[1], r[2]
+            lp.config(text=price_str, fg=TXT_USD)
+            if chg is None:
+                lv.config(text="")
+            else:
+                lv.config(text=f"{fmt_pct(chg)[:1]} {fmt_pp(chg)}",
+                          fg=UP_COLOR if chg >= 0 else DOWN_COLOR)
+
+    def _open_us_yield_menu(self):
+        if not self.menu_us_yield:
+            return
+        try:
+            self.menu_us_yield.tk_popup(self.root.winfo_pointerx(),
+                                        self.root.winfo_pointery())
+        finally:
+            try:
+                self.menu_us_yield.grab_release()
+            except Exception:
+                pass
+
+    def _set_us_yield_mat(self):
+        mat = self._us_yield_sel_var.get()
+        if mat not in US_YIELD_MATS:
+            return
+        self.last["us_yield_sel"] = mat
+        save_cache(self.last)
+        self._render()
+
+    def _render_us_yield_sub(self):
+        d = self.last.get("us_yield") or {}
+        curve = d.get("curve") or {}
+        parts = []
+        if curve:
+            sel = self._us_yield_sel_var.get()
+            if sel not in US_YIELD_MATS:
+                sel = US_YIELD_DEFAULT
+            rec = curve.get(sel) or {}
+            if rec.get("ts"):
+                parts.append(f"{rec.get('src', '?')} há "
+                             f"{max(0, int(time.time() - rec['ts']))}s")
+            else:
+                newest = max((r.get("ts", 0) for r in curve.values()), default=0)
+                if newest:
+                    src = next((r.get("src", "?") for r in curve.values()
+                                if r.get("ts") == newest), "?")
+                    parts.append(f"{src} há {max(0, int(time.time() - newest))}s")
+            items = []
+            for mat in sorted(US_YIELD_MATS, key=lambda k: US_YIELD_MATS[k]["ordem"]):
+                r = curve.get(mat)
+                if r and r.get("yield"):
+                    items.append(f"{mat} {r['yield']:.2f}%".replace(".", ","))
+            if items:
+                parts.append("curva " + " · ".join(items))
+        self.l_us_yield_sub.config(text="  ·  ".join(parts), fg=TXT_DIM)
 
     # ---------------- exibição · seção NYMEX · DIESEL HO=F (v6.1) ----------
     def _ho_label(self, rec=None):
@@ -5912,6 +7453,8 @@ class GoldWidget:
         self._render_sub()
         self._render_us_sub()
         self._render_cds_sub()      # reavalia idade/cache do CDS
+        self._render_yield_sub()    # reavalia idade/cache do yield
+        self._render_us_yield_sub()  # reavalia idade/cache do yield EUA
         self._render_ho_sub()       # reavalia idade/cache do HO=F
         self._render_brent_sub()    # reavalia idade/cache do Brent
         self._render_sc_sub()       # reavalia idade/cache do crude SC
@@ -5919,12 +7462,201 @@ class GoldWidget:
         self._render_urals_sub()    # reavalia idade/cache do Urals
         self._render_urea_sub()     # reavalia idade/cache da ureia
         self._render_sulfur_sub()   # reavalia idade/cache do enxofre
+        self._pump_tray_loop()      # v8.3.1: mantém o registro SNI vivo
         self.root.after(5000, self._tick)
+
+    def _pump_tray_loop(self):
+        """Bombeia o mainloop GLib/Gtk sem bloquear o Tk.
+
+        O AppIndicator precisa do despacho GLib para manter o registro
+        StatusNotifierItem vivo (sem isso o ícone some ~5s após o boot,
+        mesmo com set_status(ACTIVE)). main_context_iteration(False) só
+        despacha o que já está pendente — nunca bloqueia. Qualquer falha
+        aqui é ignorada: o widget jamais pode quebrar por causa do tray.
+        """
+        try:
+            tray = getattr(self, "_tray", None)
+            GLib = getattr(tray, "GLib", None) if tray is not None else None
+            if GLib is None or not getattr(tray, "ok", False):
+                return
+            try:
+                ctx = GLib.main_context_default()
+            except Exception:
+                return
+            try:
+                for _ in range(20):
+                    if not ctx.iteration(False):
+                        break
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     # ----------------------------- saída --------------------------------
     def quit(self):
         self.stop.set()
+        try:
+            if self._tray_refresh_job is not None:
+                try:
+                    self.root.after_cancel(self._tray_refresh_job)
+                except Exception:
+                    pass
+                self._tray_refresh_job = None
+        except Exception:
+            pass
+        try:
+            if self._tray is not None:
+                self._tray.stop()
+        except Exception:
+            pass
         self.root.destroy()
+
+    def _on_close_window(self):
+        """Handler do X da janela (v8.3.2): minimiza p/ bandeja se ativa,
+        senão encerra de verdade (quit -> exit 0 -> sem relançamento)."""
+        try:
+            if getattr(self, "_tray_ok", False):
+                self.hide_to_tray()
+                return
+        except Exception as e:
+            log(f"bandeja: falha ao minimizar via X ({e})")
+        self.quit()
+
+    # ---------------- v8.3: bandeja (mostrar / ocultar) -------------------
+    def is_visible(self):
+        """Visível = flag interna E janela mapeada. Nunca levanta."""
+        try:
+            if not getattr(self, "_visible", True):
+                return False
+            try:
+                return bool(self.root.winfo_viewable())
+            except Exception:
+                return bool(getattr(self, "_visible", True))
+        except Exception:
+            return True
+
+    def show_from_tray(self):
+        """Reexibe a janela (chamado via menu da bandeja)."""
+        try:
+            self.root.deiconify()
+        except Exception:
+            pass
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+        # recoloca na camada desktop/BOTTOM configurada no boot
+        try:
+            if getattr(self, "_desktop_layer", False):
+                try:
+                    self.root.attributes(
+                        "-type", "normal" if self.var_top.get() else "desktop")
+                except Exception:
+                    pass
+                try:
+                    self._below_applied = False
+                    self._apply_below_layer()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            self.root.lift()
+        except Exception:
+            pass
+        self._visible = True
+        try:
+            if self._tray_ok and self._tray is not None:
+                self._tray.refresh()
+        except Exception:
+            pass
+        log("widget visível (via bandeja)")
+
+    def hide_to_tray(self, silent=False):
+        """Oculta a janela; o processo segue rodando (polling/cache/log).
+
+        Sem bandeja ativa vira no-op seguro (nunca some sem tray).
+        """
+        if not getattr(self, "_tray_ok", False):
+            if not silent:
+                log("minimizar p/ bandeja ignorado: bandeja inativa")
+            return
+        try:
+            self.root.withdraw()
+        except Exception as e:
+            log(f"bandeja: falha ao ocultar ({e})")
+            return
+        self._visible = False
+        try:
+            if self._tray is not None:
+                self._tray.refresh()
+        except Exception:
+            pass
+        if not silent:
+            log("widget minimizado p/ bandeja")
+
+    def toggle_visible(self):
+        """Alterna visível <-> bandeja (item Mostrar/Ocultar)."""
+        try:
+            if self.is_visible():
+                self.hide_to_tray()
+            else:
+                self.show_from_tray()
+        except Exception as e:
+            log(f"bandeja: falha no toggle ({e})")
+
+    def tray_graph_entries(self):
+        """Entradas do submenu 'Ver gráfico' da bandeja (mesmas da janela)."""
+        entries = [
+            ("Ouro spot USD", "spot_usd"),
+            ("Ouro spot BRL", "spot_brl"),
+            ("Cobre (COMEX HG=F)", "copper"),
+            ("Cobre SHFE (China)", "cu_shfe"),
+            ("Gasolina EUA", "fuel_gas"),
+            ("Diesel EUA", "fuel_diesel"),
+            ("CDS Brasil 5 anos", "cds_5y"),
+            ("Diesel NYMEX", "ho_f"),
+            ("Brent (benchmark)", "brent"),
+            ("Crude SC (Xangai)", "sc_f"),
+            ("Murban (Emirados)", "murban"),
+            ("Urals (Rússia)", "urals"),
+            ("Uréia (spot intl.)", "urea_me"),
+            ("Uréia CFR Brasil", "urea_br"),
+            ("Enxofre (spot CN)", "sulfur"),
+        ]
+        try:
+            ysel = (self._yield_sel_var.get()
+                    if getattr(self, "_yield_sel_var", None) is not None
+                    and self._yield_sel_var.get() in YIELD_MATS
+                    else YIELD_DEFAULT)
+        except Exception:
+            ysel = YIELD_DEFAULT
+        try:
+            uysel = (self._us_yield_sel_var.get()
+                     if getattr(self, "_us_yield_sel_var", None) is not None
+                     and self._us_yield_sel_var.get() in US_YIELD_MATS
+                     else US_YIELD_DEFAULT)
+        except Exception:
+            uysel = US_YIELD_DEFAULT
+        entries.append(("Yield nominal Brasil (venc. atual)", "br_yield:" + ysel))
+        entries.append(("Yield Treasury EUA (venc. atual)", "us_yield:" + uysel))
+        return entries
+
+    def _tray_refresh_tick(self):
+        """Reagenda o refresh da bandeja (label/título + Mostrar/Ocultar)."""
+        self._tray_refresh_job = None
+        if self.stop.is_set():
+            return
+        try:
+            if self._tray_ok and self._tray is not None:
+                self._tray.refresh()
+        except Exception:
+            pass
+        try:
+            self._tray_refresh_job = self.root.after(
+                5000, self._tray_refresh_tick)
+        except Exception:
+            pass
 
 # ------------------------------- DUMP ------------------------------------
 def dump():
@@ -6023,6 +7755,36 @@ def dump():
               f"({', '.join(vars_)}){pd_s} — {c.get('dt', '')}")
     except Exception as e:
         print(f"CDS BR 5Y: FALHOU ({e})")
+
+    try:
+        y = fetch_yield_br(YIELD_DEFAULT)
+        last["br_yield"] = {"curve": y, "sel": YIELD_DEFAULT}
+        itens = []
+        for mat in sorted(YIELD_MATS, key=lambda k: YIELD_MATS[k]["ordem"]):
+            r = y.get(mat)
+            if r and r.get("yield"):
+                itens.append(f"{mat} {fmt_yield(r['yield'])}%"
+                             f"({r['chg_pp']:+.2f}pp)" if r.get("chg_pp") is not None
+                             else f"{mat} {fmt_yield(r['yield'])}%")
+        srcs = sorted({r.get("src", "?") for r in y.values()})
+        print(f"YIELD BR NOMINAL [{'/'.join(srcs)}]: {' · '.join(itens)}")
+    except Exception as e:
+        print(f"YIELD BR NOMINAL: FALHOU ({e})")
+
+    try:
+        y = fetch_us_yield(US_YIELD_DEFAULT)
+        last["us_yield"] = {"curve": y, "sel": US_YIELD_DEFAULT}
+        itens = []
+        for mat in sorted(US_YIELD_MATS, key=lambda k: US_YIELD_MATS[k]["ordem"]):
+            r = y.get(mat)
+            if r and r.get("yield"):
+                itens.append(f"{mat} {fmt_yield(r['yield'])}%"
+                             f"({r['chg_pp']:+.2f}pp)" if r.get("chg_pp") is not None
+                             else f"{mat} {fmt_yield(r['yield'])}%")
+        srcs = sorted({r.get("src", "?") for r in y.values()})
+        print(f"US YIELD TREASURY [{'/'.join(srcs)}]: {' · '.join(itens)}")
+    except Exception as e:
+        print(f"US YIELD TREASURY: FALHOU ({e})")
 
     try:
         h = fetch_ho_future()
@@ -6165,14 +7927,21 @@ def main():
         print("Sem display gráfico (DISPLAY não definido).", file=sys.stderr)
         return 1
 
-    log("iniciando widget (v8.2: + seção CÂMBIO · USD/BRL — linha só com o"
+    log("iniciando widget (v8.3: SEMPRE inicia minimizado na bandeja"
+        " AyatanaAppIndicator3 — menu Mostrar/Ocultar + Atualizar agora + Ver"
+        " gráfico + Sair, label com spot BRL (R$/g, v8.4), ícone dourado gerado com"
+        " Pillow; --show inicia visível; sem bandeja segue visível sem"
+        " quebrar; v8.2: + seção CÂMBIO · USD/BRL — linha só com o"
         " valor mid e cadeia de 10 degraus awesomeapi -> Yahoo -> TE ->"
         " floatrates -> currency-api -> er-api -> frankfurter -> BCB SGS ->"
-        " Olinda PTAX -> BCB SOAP, cache 24h; mantém v7.3: seção COBRE com"
-        " COMEX HG=F + SHFE CU0 da China — cadeia Sina -> Eastmoney"
-        " futsseapi -> push2delay -> cache, US$/lb com USDCNY fresco;"
-        " mantém v7.1: janela redimensionável + rolagem oculta + tamanho"
-        " persistente)")
+        " Olinda PTAX -> BCB SOAP, cache 24h; v8.1: + seção EUA · YIELD"
+        " GOVERNO TREASURY (UST bills/notes/bonds, dropdown por vencimento"
+        " — cadeia Investing tabela www/m. -> TE -> instrumento -> API"
+        " historical -> FRED DGS* -> cache 4d; v8.0: BRASIL · YIELD GOVERNO"
+        " NOMINAL (LTN/NTN) com DROPDOWN por vencimento — cadeia Investing"
+        " tabela www/m. -> TE 10y -> instrumento -> API historical -> cache"
+        " 4d, Δ em pp; mantém v7.1: janela redimensionável + rolagem oculta"
+        " + tamanho persistente)")
     root = tk.Tk()
     GoldWidget(root)
     root.mainloop()

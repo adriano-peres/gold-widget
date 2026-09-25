@@ -13,6 +13,8 @@ Widget de desktop em **Python puro** (tkinter) que vive na sua área de trabalho
 - **Cobre** — COMEX `HG=F` (benchmark global) e SHFE `CU0` (China), ambos em US$/lb para comparar o prêmio chinês de graça;
 - **Combustível EUA** — média nacional **diária** de varejo da bomba (gasolina regular e diesel, AAA);
 - **Risco soberano do Brasil** — CDS 5 anos em bps + probabilidade de default implícita;
+- **Yield do governo do Brasil** — curva **nominal** (LTN/NTN, % a.a.) com **dropdown ▾ para escolher o vencimento** (3m/6m/9m/1a/2a/3a/5a/8a/10a) e Δ do dia em pontos percentuais;
+- **Yield do Tesouro dos EUA** — curva **nominal** UST (bills/notes/bonds, % a.a.) com **dropdown ▾** (1m/3m/6m/1a/2a/3a/5a/7a/10a/20a/30a), o tipo (bill/note/bond) no nome do vencimento e Δ em pontos percentuais;
 - **Petróleo e derivados** — NYMEX diesel `HO=F`, Brent `BZ=F`, Crude SC de Xangai, Murban (Emirados) e Urals (Rússia);
 - **Fertilizante e commodity química** — uréia (spot internacional + CFR Brasil) e enxofre spot da China.
 
@@ -66,6 +68,14 @@ Diesel (nacional)        US$ 6.522/g        ▼ 0.09%
 CDS 5 anos               119.75 bps         ▼ 3.61% 1m
 PD implícita (rec. 40%)  2,00%
 
+── BRASIL · YIELD GOVERNO (NOMINAL) ──
+Yield nominal (LTN/NTN) · 10a  14,170%      ▲ +0,04pp  [▾]
+Investing.com há 0s  ·  curva 3m 13,39% · 6m 13,35% · 9m 13,35% · 1a 13,48% · 2a 13,74% · 3a 13,92% · 5a 14,05% · 8a 14,13% · 10a 14,13%
+
+── EUA · YIELD GOVERNO (TREASURY) ──
+Yield nominal (UST) · 10 anos (note)  5,116%      ▲ +0,17pp  [▾]
+Investing.com há 0s  ·  curva 1m 3,88% · 3m 4,14% · 6m 4,34% · 1a 4,45% · 2a 4,90% · 3a 4,97% · 5a 5,00% · 7a 5,05% · 10a 5,12% · 20a 5,46% · 30a 5,40%
+
 ── NYMEX · DIESEL (HO=F · ATACADO) ──
 HO=F · out/26            US$ 4.873/g        ▼ 1.40%
                          (= US$ 204.66/bbl · OI 67,982)
@@ -102,6 +112,8 @@ Cada seção tem um rodapé próprio com a fonte usada, frescor do dado ("há Ns
 - **Cobre SHFE CU0** (v7.3): o cobre da China em US$/lb = CNY/t ÷ USDCNY ÷ 2204,62 — Sina → Eastmoney futsseapi → Eastmoney push2delay → cache 4d; sem câmbio fresco mostra CNY/t cru (nunca com taxa velha)
 - **Combustível EUA diário** (v5.9): média nacional de varejo da **AAA Fuel Prices** (rede OPIS/WEX, atualiza todo dia), variação vs ontem; refetch 1/h
 - **CDS Brasil 5 anos** (v5.7/v5.8): worldgovernmentbonds.com (REST interno, intraday) → Investing.com (SSR, EOD com checagem de `lastUpdateTime`) → cache 7d; PD implícita com 40% de recuperação
+- **Yield Brasil nominal (v8.0)**: curva LTN/NTN com **dropdown de vencimento** (persistente no cache), Δ do dia em **pontos percentuais** (yield não se lê em % de %), rodapé com a curva inteira e gráfico no clique — Investing (tabela www/m.) → TradingEconomics (10y) → Investing (página do instrumento) → Investing (API historical, linha de hoje) → cache 4d
+- **Yield EUA Treasury (v8.1)**: curva UST nominal (bills ≤1a / notes 2–10a / bonds 20–30a misturados como no noticiário, com o tipo no nome) com dropdown persistente, Δ em pp, curva inteira no rodapé e gráfico no clique — Investing (tabela `/rates-bonds/usa-government-bonds`, www/m.) → TradingEconomics (só 3m/6m/10a/20a/30a) → Investing (instrumento) → Investing (API historical) → **FRED DGS\*** (CMT oficial, completa a curva) → cache 4d
 - **NYMEX HO=F, Brent BZ=F, Crude SC, Murban, Urals, uréia (2 linhas) e enxofre** — cada um com cadeia dedicada (ver tabela abaixo)
 - **Backoff em duas camadas** (v6.3/v6.4): cooldown **por fonte** (429 = falha dupla + jitter) e cooldown **por seção** com dobra a cada falha consecutiva (teto 30 min) — cadeia morta não vira martelada
 - Tabela do OilPrice.com com cache de 2 min: serve Brent, Urals e Murban sem request duplicado
@@ -128,6 +140,8 @@ Toda fonte tem plano B (e C, D...). Se uma responde erro **ou responde sem dado*
 | **Cobre SHFE CU0** (US$/lb) | Sina `nf_CU0` (contrato principal real) → Eastmoney futsseapi `113_cum_qt` (主连 emendado) → Eastmoney push2delay `113.cum` → cache 4d | 5 min | 4 dias |
 | **Combustível EUA (varejo · diário)** | AAA Fuel Prices `gasprices.aaa.com` (tabela nacional, vs ontem) → cache 14d | 1 h | 14 dias |
 | **CDS Brasil 5 anos (bps)** | WGB (REST interno; payload embutido → payload reextraído da página) → Investing.com SSR `BRGV5YUSAC=R` (EOD, checa `lastUpdateTime`) → cache 7d | 15 min | 7 dias |
+| **Yield Brasil nominal (LTN/NTN, % a.a.)** | Investing tabela SSR (`/rates-bonds/brazil-government-bonds`; curva inteira intraday, host www → host m.) → TradingEconomics (só o 10y; pulado p/ outros vencimentos) → Investing página do instrumento (SSR `__NEXT_DATA__`, EOD) → Investing API historical (linha de hoje) → cache 4d | 15 min | 4 dias |
+| **Yield EUA Treasury (UST, % a.a.)** | Investing tabela SSR (`/rates-bonds/usa-government-bonds`; curva inteira intraday, host www → host m.) → TradingEconomics (só 3m/6m/10a/20a/30a; os demais slugs são 404) → Investing página do instrumento (SSR, EOD) → Investing API historical (linha de hoje) → **FRED `DGS1MO`…`DGS30`** (CMT oficial, EOD; completa a curva sem sobrescrever) → cache 4d | 15 min | 4 dias |
 | **NYMEX diesel HO=F** (US$/gal e /bbl) | Yahoo `HO=F` (q1→q2) → FXEmpire `/commodities/ho` (CFD Oanda) → TradingEconomics (scrape) → cache 4d | 5 min | 4 dias |
 | **Brent BZ=F** (US$/bbl) | Yahoo `BZ=F` (q1→q2) → FXEmpire `/commodities/brent-crude-oil` (CFD BCO/USD) → OilPrice.com tabela (~11 min de atraso) → OilPrice.com freewidgets (POST + CSRF) → cache 4d | 5 min | 4 dias |
 | **Crude SC · Xangai INE** (US$/bbl) | Sina `nf_SC0` → Eastmoney futsseapi `142_scm_qt` → Eastmoney push2delay `142.scm` → cache 4d; US$/bbl só com USDCNY fresco | 5 min | 4 dias |
@@ -140,6 +154,8 @@ Toda fonte tem plano B (e C, D...). Se uma responde erro **ou responde sem dado*
 Notas de robustez:
 
 - **Cobre:** o FXEmpire espelha o contrato **mais líquido** (dez/26, OI ~175 mil — o front set/26 tem OI ~1,3 mil), que é o benchmark do HG; o CU0 usa a variação vs **settlement** anterior (convenção chinesa) e a mesma unidade US$/lb do COMEX para o prêmio SHFE ser comparável de graça.
+- **Yield Brasil:** a curva exibida é a **nominal** (LTN/NTN, 14,17% 10y) — a NTN-B **real** do worldgovernmentbonds (7,38% 10y) fica FORA por decisão: bases diferentes não se misturam no mesmo número. O vencimento vem do `title` da linha do Investing, não do slug (no 8y o slug deles discorda do título). Δ em **pontos percentuais**, não % relativo.
+- **Yield EUA:** só a **nominal** UST (TIPS/real fica FORA, mesma regra da NTN-B). Bills (≤1a, taxa de desconto) e notes/bonds (2–30a, coupon yield) **misturados** como no noticiário, com o tipo no nome de cada vencimento. O vencimento vem do `title` do `<a>` (os dois formatos `United States 10-Year` e `U.S. 20-Year` existem na mesma tabela; o 20y ainda tem slug `us-20-year-…` sem os pontos dos demais) com fallback no slug do `href`. O FRED **pendura** (timeout) em UA de navegador e no `gold-widget/5.0` — os fetches dele usam `FRED_UA` (isso também conserta o fallback de combustível, que morria em timeout).
 - **Urals:** não existe em bolsa (Yahoo/FRED/Investing não têm série de spot — verificado); o dado vem de avaliações Argus/Platts com atraso. A v7.0 derrubou o delay de T+2 (OilPrice) para **T+1** com TradingEconomics e minfin.com.ua. Tempo real verdadeiro exige terminal pago (Bloomberg/Argus/Platts).
 - **Enxofre:** não existe público em US$/t (Pink Sheet sem a série, sem futuro em bolsa); as duas fontes vivas publicam CNY/t do mesmo mercado.
 - Se o baseline (PAXG) for de outro dia UTC, a variação "no dia" entra em pausa em vez de mentir.
@@ -207,9 +223,10 @@ O polling roda em thread separada a cada **90 s** (abaixo do teto anônimo de ~1
 | **Roda do mouse** sobre o widget | rola o conteúdo quando não couber na janela (sem barra de rolagem; Shift+roda rola na horizontal) |
 | **Duplo clique** | encosta no canto superior direito (mantém o tamanho escolhido) |
 | **Clique simples** num valor | abre o popup com o gráfico do ativo (período 7D–1A ajustável) |
+| **▾ no yield** | dropdown para escolher o **vencimento** do yield (Brasil 3m–10a / EUA 1m–30a, com bill/note/bond no nome); a escolha fica salva |
 | **Botão direito** | abre o menu |
 | Menu → *Atualizar agora* | força um refresh imediato (não empilha com o poller em curso) |
-| Menu → *Ver gráfico* | abre o gráfico de qualquer um dos 15 ativos sem precisar clicar nele |
+| Menu → *Ver gráfico* | abre o gráfico de qualquer um dos ativos sem precisar clicar nele |
 | Menu → *Manter no topo* | alterna entre ficar sob as janelas (padrão) e sempre visível |
 | Menu → *Encostar no canto* | volta para a posição padrão |
 | Menu → *Sair* | encerra |
@@ -231,6 +248,8 @@ COBRE COMEX [FXEmpire/Oanda]: 6.76 US$/lb (-1.08%, Δ -0.0740, dia 6.75-6.91, OI
 COBRE SHFE CU0 [Sina nf_CU0]: 7.38 US$/lb (-0.10%, cru CNY 110,140/t, USDCNY 6.7674)
 US FUEL [AAA Fuel Prices]: gasolina 4.474 US$/gal · diesel 6.522 US$/gal (dia 2026-09-23) (Δ dia: gasolina -0.001, diesel -0.006)
 CDS BR 5Y [WGB]: 119.75 bps (1s +6.17%, 1m -3.61%, 1a -5.13%) · PD implícita 2,00% — 23 Sep 2026, 2:15
+YIELD BR NOMINAL [Investing.com]: 3m 13,385%(+0.00pp) · 6m 13,350%(+0.02pp) · 9m 13,350%(+0.01pp) · 1a 13,480%(+0.02pp) · 2a 13,743%(+0.04pp) · 3a 13,915%(+0.04pp) · 5a 14,045%(+0.02pp) · 8a 14,130%(+0.00pp) · 10a 14,130%(+0.00pp)
+US YIELD TREASURY [Investing.com]: 1m 3,884%(+0.00pp) · 3m 4,136%(+0.03pp) · 6m 4,343%(+0.04pp) · 1a 4,453%(+0.04pp) · 2a 4,897%(+0.12pp) · 3a 4,969%(+0.15pp) · 5a 4,998%(+0.15pp) · 7a 5,049%(+0.15pp) · 10a 5,116%(+0.17pp) · 20a 5,457%(+0.12pp) · 30a 5,397%(+0.09pp)
 NYMEX DIESEL [FXEmpire/Oanda]: 4.8729 US$/gal (= US$ 204.66/bbl · -1.40%, OI 67,982, contrato Oct 2026)
 BRENT [FXEmpire/Oanda]: 102.13 US$/bbl (+1.33%, Δ +1.34 · dado 2026-09-23 14:53)
 CRUDE SC XANGAI [Sina nf_SC0]: 107.07 US$/bbl (+0.69%, cru CNY 724.60, USDCNY 6.7674)
@@ -268,6 +287,10 @@ Constantes no topo do `gold_widget.py`:
 | `CU_REFETCH` / `CU_MAX_AGE` | `5 min` / `4 dias` | cadência e expiração do cobre SHFE CU0 |
 | `FUEL_REFETCH` / `FUEL_MAX_AGE` | `1 h` / `14 dias` | cadência e expiração do combustível AAA (diário) |
 | `CDS_POLL_SECONDS` / `CDS_MAX_AGE` | `15 min` / `7 dias` | cadência e expiração do CDS Brasil |
+| `YIELD_REFETCH` / `YIELD_MAX_AGE` | `15 min` / `4 dias` | cadência e expiração do yield nominal do Brasil |
+| `US_YIELD_REFETCH` / `US_YIELD_MAX_AGE` | `15 min` / `4 dias` | cadência e expiração do yield Treasury dos EUA |
+| `US_YIELD_LO` / `US_YIELD_HI` | `0.0` / `20.0` | sanidade do yield UST (o piso 0,5 do BR rejeitaria o UST ~0 de 2020) |
+| `FRED_UA` | `python-urllib/3.12` | UA dos fetches FRED (o FRED pendura em UA de navegador) |
 | `HO_REFETCH` / `HO_MAX_AGE` | `5 min` / `4 dias` | cadência e expiração do NYMEX HO=F |
 | `BRENT_REFETCH` / `BRENT_MAX_AGE` | `5 min` / `4 dias` | cadência e expiração do Brent |
 | `SC_REFETCH` / `SC_MAX_AGE` | `5 min` / `4 dias` | cadência e expiração do Crude SC |
@@ -313,6 +336,8 @@ A solução: o widget cria-se como tipo `desktop` e depois envia ao WM um *clien
 | **v7.1** | **Janela redimensionável** com alças invisíveis nas 4 bordas/4 cantos (resize direcional, mínimo 200×150), **rolagem oculta** (roda do mouse, sem barra na UI; texto não escala) e **tamanho persistente** no cache |
 | **v7.2** | **Seção COBRE · COMEX (HG=F)** logo abaixo do spot: intraday US$/lb com cadeia Yahoo → FXEmpire (CFD Oanda) → TradingEconomics → cache 4d, gráfico 7D–1A no clique |
 | **v7.3** | **Linha CU0 · SHFE (cobre da China)** na seção COBRE: contrato principal contínuo da SHFE em US$/lb (= CNY/t ÷ USDCNY ÷ 2204,62, câmbio fresco obrigatório), cadeia Sina → futsseapi → push2delay → cache 4d, variação vs settlement (convenção chinesa) |
+| **v8.0** | **Seção BRASIL · YIELD GOVERNO (NOMINAL)** logo abaixo do CDS: curva LTN/NTN (% a.a., 14,17% 10y) com **dropdown ▾ de vencimento** persistente, Δ do dia em **pontos percentuais**, curva inteira no rodapé; cadeia Investing (tabela www/m.) → TE (10y) → instrumento → API historical → cache 4d; gráfico 7D–1A no clique |
+| **v8.1** | **Seção EUA · YIELD GOVERNO (TREASURY)** logo abaixo do yield BR: curva UST nominal 1m–30a (bills/notes/bonds misturados, tipo no nome) com dropdown persistente, Δ em pp, curva inteira no rodapé; cadeia Investing (tabela `usa-government-bonds` www/m.) → TE (3m/6m/10a/20a/30a) → instrumento → API historical → **FRED DGS\*** (completa a curva) → cache 4d; gráfico 7D–1A no clique; fix do TE BR (chave `10y`→`10a`); fix do FRED (UA — conserta o fallback de combustível) |
 | **v8.2** | **Seção CÂMBIO · USD/BRL** logo abaixo do OURO · SPOT: só o valor (mid 4 casas pt-BR, `US$ 1 = R$ 5,1526`), `fetch_usdbrl()` separado do `fetch_fx` (derivações intactas); cadeia de **10 degraus** com queda automática em cascata (falha → próximo; próximo falhou → outro): awesomeapi → Yahoo `USDBRL=X` → TradingEconomics → floatrates → currency-api (**pages.dev** 1º — o jsDelivr `@latest` serve cotação velha) → open.er-api → frankfurter.dev → BCB SGS → Olinda PTAX → BCB SOAP; mid = (compra+venda)/2 ou (bid+ask)/2; cooldown por fonte; cache 24h; também no `--dump` |
 
 ## Licença
