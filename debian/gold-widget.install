@@ -1,0 +1,5 @@
+gold_widget.py usr/share/gold-widget/
+gold-widget usr/bin/
+debian/ouro-widget.desktop usr/share/applications/
+debian/ouro-widget-autostart.desktop etc/xdg/autostart/
+debian/gold-widget.1 usr/share/man/man1/

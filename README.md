@@ -191,7 +191,20 @@ cd gold-widget
 python3 gold_widget.py
 ```
 
-### Aparecer no Show Apps (ícone)
+### Instalação via .deb (Debian/Ubuntu, igual firefox/vlc)
+
+```bash
+sudo apt install devscripts debhelper   # só na primeira vez (ferramentas de build)
+dpkg-buildpackage -b -us -uc            # gera ../gold-widget_8.2-1_all.deb
+sudo dpkg -i ../gold-widget_8.2-1_all.deb
+sudo apt -f install                     # se reclamar de dependência
+```
+
+O pacote instala `gold-widget` em `/usr/bin` (comando global), o ícone em
+`/usr/share/applications` (Show Apps para todos os usuários) e o autostart
+global em `/etc/xdg/autostart` (abre para todo usuário que logar).
+
+### Aparecer no Show Apps (ícone, sem sudo)
 
 ```bash
 ./install.sh              # só o ícone no Show Apps

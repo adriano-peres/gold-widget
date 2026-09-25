@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Ouro Widget
+GenericName=Widget do Ouro
+Comment=Widget de ouro no desktop (spot, câmbio, cobre e mais)
+Exec=/usr/bin/gold-widget
+Icon=libreoffice-calc
+Terminal=false
+Categories=Utility;Finance;
+StartupNotify=false

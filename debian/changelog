@@ -1,0 +1,7 @@
+gold-widget (8.2-1) unstable; urgency=medium
+
+  * Empacotamento Debian inicial: /usr/bin/gold-widget,
+    ícone global em /usr/share/applications e autostart global
+    em /etc/xdg/autostart.
+
+ -- adrianodev1995 <adriano@a00s.com>  Fri, 25 Sep 2026 15:42:03 -0300

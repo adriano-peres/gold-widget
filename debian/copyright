@@ -1,0 +1,7 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Source: https://github.com/adriano-peres/gold-widget
+
+Files: *
+Copyright: 2026 adrianodev1995 <adriano@a00s.com>
+License: All-Rights-Reserved
+ Uso pessoal. Todos os direitos reservados.

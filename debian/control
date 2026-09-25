@@ -1,0 +1,18 @@
+Source: gold-widget
+Section: utils
+Priority: optional
+Maintainer: adrianodev1995 <adriano@a00s.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: gold-widget
+Architecture: all
+Depends: python3, python3-tk, libx11-6, ${misc:Depends}
+Description: Widget de ouro no desktop (spot, câmbio, cobre e mais)
+ Widget de desktop em Python puro (tkinter) que mostra ouro spot
+ USD/BRL, câmbio, cobre, combustível EUA, CDS Brasil, yields,
+ petróleo, ureia e enxofre — sem chave de API.
+ .
+ Aparece no Show Apps como "Ouro Widget" e pode iniciar junto
+ com a sessão.
