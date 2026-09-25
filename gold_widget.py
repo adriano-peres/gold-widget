@@ -533,6 +533,8 @@ v5.8:
   Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
   """
 
+import errno
+import fcntl
 import io
 import json
 import math
@@ -606,6 +608,10 @@ SGS_VENDA       = 1                             # dólar comercial venda (PTAX)
 STATE_DIR     = os.path.expanduser("~/.local/share/gold-widget")
 CACHE_FILE    = os.path.join(STATE_DIR, "last_price.json")
 LOG_FILE      = os.path.join(STATE_DIR, "widget.log")
+# v8.4.1 — trava anti-instância-dupla: flock(LOCK_EX|LOCK_NB) neste arquivo.
+# O lock morre com o processo (inclusive SIGKILL): NUNCA fica stale.
+# SÓ a GUI segura o lock; --dump NUNCA trava (livre p/ teste/cron).
+LOCK_FILE     = os.path.join(STATE_DIR, "widget.lock")
 TRAY_ICON_FILE = os.path.join(STATE_DIR, "tray-gold.png")  # v8.3: ícone da bandeja
 MARGIN        = 16                                 # distância da borda lateral
 MARGIN_Y      = 40                                 # abaixo da barra do topo
@@ -1795,6 +1801,46 @@ def log(msg):
                 f.write(line)
     except Exception:
         pass
+
+# ------------------- INSTÂNCIA ÚNICA (v8.4.1) -------------------
+# Trava a GUI em UMA instância via flock(LOCK_EX|LOCK_NB) em LOCK_FILE.
+# Por que flock e não pidfile: o kernel libera o lock sozinho quando o
+# processo morre (até em SIGKILL/poweroff) — pidfile fica stale e exige
+# heurística de kill -0 + risco de PID reciclado.
+# O fd fica guardado em _INSTANCE_LOCK_FD (global) a app inteira: se o fd
+# fosse fechado/GC'd, o lock seria liberado e a proteção sumiria.
+# Retorna True (lock nosso, pode rodar) ou False (outra instância dona).
+_INSTANCE_LOCK_FD = None
+
+def acquire_instance_lock():
+    """Tenta segurar a trava de instância única. Nunca levanta."""
+    global _INSTANCE_LOCK_FD
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        # O_RDWR|O_CREAT cria se não existir e NUNCA trunca (só o dono
+        # do lock reescreve o carimbo, via ftruncate+write abaixo).
+        fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            # EACCES/EAGAIN = outro processo segura o lock. Outro errno
+            # (ex.: NFS sem suporte) = fail-open: roda sem trava, como antes.
+            os.close(fd)
+            if e.errno in (errno.EACCES, errno.EAGAIN):
+                return False
+            log(f"instância única indisponível ({e}); rodando sem trava")
+            return True
+        _INSTANCE_LOCK_FD = fd  # fd ABERTO até o exit: lock vivo
+        try:
+            # Carimbo informativo (best-effort; falha aqui não solta o lock).
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{os.getpid()}\n".encode("ascii"))
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        log(f"instância única indisponível ({e}); rodando sem trava")
+        return True  # fail-open: trava NUNCA impede o uso
 
 # ----------------------------- FORMATAÇÃO -------------------------------
 def fmt_usd(v):
@@ -7915,8 +7961,16 @@ def dump():
 # ------------------------------- MAIN ------------------------------------
 def main():
     if "--dump" in sys.argv:
+        # --dump NUNCA trava: consulta pontual de terminal (teste/cron),
+        # roda livre mesmo com o widget aberto.
         log("modo --dump (sem interface)")
         return dump()
+
+    # Instância única: 2ª GUI sai em silêncio (exit 0 — limpo p/ o caso de
+    # autostart duplo global+usuário; só o log registra).
+    if not acquire_instance_lock():
+        log("segunda instância detectada; saindo sem abrir janela")
+        return 0
 
     if tk is None:
         log("tkinter indisponível")
