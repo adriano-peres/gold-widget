@@ -191,9 +191,20 @@ cd gold-widget
 python3 gold_widget.py
 ```
 
+### Aparecer no Show Apps (ícone)
+
+```bash
+./install.sh              # só o ícone no Show Apps
+./install.sh --autostart  # ícone + iniciar junto com a sessão
+```
+
+O instalador copia `ouro-widget.desktop` para `~/.local/share/applications`
+(injetando o caminho real do repo no `Exec`, então funciona em qualquer
+usuário/máquina) e valida com `desktop-file-validate`.
+
 > **Wayland:** o posicionamento/camada usa X11 (`ctypes` + `_NET_WM_STATE`). Em Wayland puro o widget até roda (se o tkinter existir), mas os recursos de camada ficam desativados.
 
-### Iniciar junto com a sessão (opcional)
+### Iniciar junto com a sessão (manual, sem o install.sh)
 
 Crie `~/.config/autostart/ouro-widget.desktop`:
 
