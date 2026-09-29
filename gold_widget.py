@@ -1009,6 +1009,31 @@ SULFUR_MAX_AGE      = 14 * 86400      # cache vence (14 dias sem fonte)
 SULFUR_CNY_LO       = 100.0           # sãidade do valor CNY/t (hist 470..)
 SULFUR_CNY_HI       = 20000.0         # ...11.084; teto folgado
 
+# ------------------- CONFIG · CRB TR/CC EXCESS RETURN (v8.5) -----------------
+# Índice TR/CC CRB Excess Return (commodities globais, ~418 pts em 25/09/2026).
+# BASE ÚNICA 418: Yahoo sem símbolo (CR=F/^TRJCRB/^CRB/TRJCRB = 404), TE
+# /commodity/crb = 539.18 e Bloomberg CRYTR = 535.22 (outra base), DBC = ETF
+# US$ 32 (proxy, não índice) — TODOS FORA por decisão do usuário (cadeia
+# pura 418, sem misturar número). Cadeia Investing-only, cada fonte com
+# cooldown próprio (padrão v6.4; 429 = falha dupla):
+#   1º SSR www (__NEXT_DATA__, intraday/EOD delayed)
+#   2º SSR m. (mesma página, host reserva)
+#   3º API financialdata/historical pair 39972 (série diária, linha de hoje)
+#   4º SSR historical-data (__NEXT_DATA__ historicalDataStore, EOD)
+#   5º cache local (7d, cobre fds + feriado)
+# Pegadinha herdada do CDS v5.8: lastClose do SSR vem corrompido (275.96 com
+# last 418.54) — fechamento anterior real = last - change.
+INV_CRB_URL      = "https://www.investing.com/indices/thomson-reuters---jefferies-crb"
+INV_CRB_URL_M    = "https://m.investing.com/indices/thomson-reuters---jefferies-crb"
+INV_CRB_HIST_URL = ("https://www.investing.com/indices/"
+                    "thomson-reuters---jefferies-crb-historical-data")
+INV_CRB_PAIR_ID  = "39972"
+CRB_REFETCH      = 15 * 60             # índice diário/delayed: refetch 15min
+CRB_MAX_AGE      = 7 * 86400           # cache vence (7 dias sem fonte)
+CRB_INV_MAX_AGE  = 4 * 86400           # EOD (~1d) + folga fds (sex->seg ~3d)
+CRB_LO           = 50.0                # sanidade (hist 100..540; 418 hoje)
+CRB_HI           = 2000.0              # teto folgado
+
 # Tradução dos nomes em chinês vindos da xxapi (fonte CJK não é necessária)
 BANK_TR = {
     "工商银行如意金条": "ICBC Ruyi",
@@ -1093,20 +1118,44 @@ def _hist_paxg(days):
         errs.append("okx: poucos pontos")
     except Exception as e:
         errs.append(f"okx: {e}")
+    try:
+        # 3º degrau (espelha o baseline Binance->OKX): Kraken OHLC PAXGUSD.
+        d = _get_json("https://api.kraken.com/0/public/OHLC"
+                      f"?pair=PAXGUSD&interval=1440")
+        res = d.get("result") or {}
+        rows = None
+        for k2, v in res.items():
+            if k2 == "last" or not isinstance(v, list):
+                continue
+            rows = v
+            break
+        pts = []
+        for r in rows or []:
+            try:
+                pts.append((_hist_date(float(r[0])), float(r[4])))
+            except Exception:
+                continue
+        pts.sort()
+        if len(pts) >= 2:
+            return pts[-int(days):] if len(pts) > days else pts, "Kraken PAXG"
+        errs.append("kraken: poucos pontos")
+    except Exception as e:
+        errs.append(f"kraken: {e}")
     raise RuntimeError("PAXG sem serie (" + "; ".join(errs) + ")")
 
 
-def _hist_yahoo(sym, days):
+def _hist_yahoo_one(sym, days, host="query1"):
+    """Um host do Yahoo chart (q1 ou q2). Levanta se vier sem série."""
     days = int(days)
     rng = ("1mo" if days <= 31 else "3mo" if days <= 93
            else "6mo" if days <= 186 else "1y" if days <= 370
            else "2y" if days <= 730 else "5y")
-    d = _get_json("https://query1.finance.yahoo.com/v8/finance/chart/"
+    d = _get_json(f"https://{host}.finance.yahoo.com/v8/finance/chart/"
                   f"{urllib.parse.quote(sym)}?interval=1d&range={rng}",
                   {"User-Agent": BROWSER_UA})
     res = ((d.get("chart") or {}).get("result") or [])
     if not res:
-        raise ValueError(f"Yahoo {sym} sem resultado")
+        raise ValueError(f"Yahoo {sym} ({host}) sem resultado")
     ts = res[0].get("timestamp") or []
     quote = (((res[0].get("indicators") or {}).get("quote")) or [{}])[0]
     closes = quote.get("close") or []
@@ -1119,11 +1168,102 @@ def _hist_yahoo(sym, days):
         except Exception:
             continue
     if len(pts) < 2:
-        raise ValueError(f"Yahoo {sym} sem serie")
-    return pts[-days:] if len(pts) > days else pts, f"Yahoo {sym}"
+        raise ValueError(f"Yahoo {sym} ({host}) sem serie")
+    return pts[-days:] if len(pts) > days else pts
 
 
-def _hist_fx(pair, days):
+_YAHOO_STOOQ = {"GC=F": "xauusd", "HG=F": "hg.f", "HO=F": "ho.f",
+                "BZ=F": "bz.f", "UFB=F": None, "USDBRL=X": None}
+# Proxies FRED p/ quando o Yahoo cai nos 2 hosts (429 ao vivo 29/09/2026).
+# Stooq morreu (JS challenge desde 2026) -> FRED oficial assume:
+#   BZ=F -> DCOILBRENTEU (Brent Europa US$/bbl, diário, mesma unidade)
+#   HO=F -> DHOILNYH (heating oil NY Harbor US$/gal, diário, mesma unidade)
+#   HG=F -> PCOPPUSDM (cobre US$/t mensal -> ÷2204.62 vira US$/lb)
+_YAHOO_FRED_PROXY = {"BZ=F": (["DCOILBRENTEU"], 1.0),
+                     "HO=F": (["DHOILNYH"], 1.0),
+                     "HG=F": (["PCOPPUSDM"], 1.0 / 2204.62262)}
+
+
+def _hist_yahoo_fred_proxy(sym, days):
+    """Proxy FRED p/ o futuro quando o Yahoo cai (q1+q2). Mesma unidade
+    do futuro (HG converte $/t -> $/lb). Levanta se não houver proxy."""
+    spec = _YAHOO_FRED_PROXY.get(sym)
+    if not spec:
+        raise ValueError(f"FRED sem proxy p/ {sym}")
+    sids, mult = spec
+    pts, src = _hist_fred(list(sids), days + 5)
+    if mult != 1.0:
+        pts = [(d, round(v * mult, 4)) for d, v in pts]
+    days = int(days)
+    pts = pts[-days:] if len(pts) > days else pts
+    if len(pts) < 2:
+        raise ValueError(f"FRED proxy {sym}: {len(pts)} ponto(s)")
+    return pts, f"{src} (proxy {sym})"
+
+
+def _hist_stooq(sym, days):
+    """Fallback histórico via Stooq CSV diário (sem chave). Serve quando os
+    dois hosts do Yahoo caem (429/bloqueio). Mapeia o ticker do Yahoo p/
+    o código Stooq; sem mapeamento levanta (cai pro log local)."""
+    code = _YAHOO_STOOQ.get(sym)
+    if not code:
+        raise ValueError(f"Stooq sem mapeamento p/ {sym}")
+    days = int(days)
+    raw = _http_get(f"https://stooq.com/q/d/l/?s={code}&i=d",
+                    {"User-Agent": BROWSER_UA},
+                    timeout=20).decode("utf-8", "replace")
+    pts = []
+    for ln in raw.splitlines()[1:]:
+        p = ln.strip().split(",")
+        if len(p) < 5:
+            continue
+        try:
+            v = float(p[4])
+            if v > 0 and re.match(r"^\d{4}-\d{2}-\d{2}$", p[0]):
+                pts.append((p[0], v))
+        except Exception:
+            continue
+    if len(pts) < 2:
+        raise ValueError(f"Stooq {code} sem serie")
+    return pts[-days:] if len(pts) > days else pts
+
+
+def _hist_yahoo(sym, days):
+    """Série diária do Yahoo com fallback perfeito (espelha o preço):
+    query1 -> query2 (mesmo padrão do _fetch_yahoo_future q1->q2 em 429)
+    -> FRED proxy (Brent/heating-oil/cobre oficial) -> (GC=F ainda tenta
+    PAXG como proxy do spot). Stooq removido (JS challenge desde 2026).
+    Cada degrau logado; cadeia morta levanta com os erros (o fetch_history
+    cai pro log local, que acumula o poller)."""
+    days = int(days)
+    errs = []
+    for host in ("query1", "query2"):
+        try:
+            _yahoo_throttle()
+            pts = _hist_yahoo_one(sym, days, host)
+            tag = f"Yahoo {sym}" + ("" if host == "query1" else " (q2)")
+            return pts, tag
+        except Exception as e:
+            errs.append(f"{host}: {e}")
+            log(f"hist yahoo {sym}: {host} falhou ({e})")
+    try:
+        pts, src = _hist_yahoo_fred_proxy(sym, days)
+        return pts, src
+    except Exception as e:
+        errs.append(f"fred-proxy: {e}")
+        log(f"hist yahoo {sym}: FRED proxy falhou ({e})")
+    if sym == "GC=F":
+        # Proxy do futuro pelo spot: PAXG anda colado no GC (mesma base).
+        try:
+            pts, src = _hist_paxg(days)
+            return pts, f"{src} (proxy GC=F)"
+        except Exception as e:
+            errs.append(f"paxg-proxy: {e}")
+    raise RuntimeError(f"Yahoo {sym} sem serie (" + "; ".join(errs) + ")")
+
+
+def _hist_fx_awesome(pair, days):
+    """Um degrau: awesomeapi daily (bid)."""
     n = min(max(int(days) + 10, 8), 360)
     hist = _get_json(f"https://economia.awesomeapi.com.br/json/daily/{pair}/{n}")
     pts = []
@@ -1133,9 +1273,126 @@ def _hist_fx(pair, days):
         except Exception:
             continue
     if len(pts) < 2:
-        raise ValueError(f"FX {pair} sem serie")
+        raise ValueError(f"awesomeapi {pair}: {len(pts)} ponto(s)")
     days = int(days)
-    return pts[-days:] if len(pts) > days else pts, f"awesomeapi {pair}"
+    return pts[-days:] if len(pts) > days else pts
+
+
+def _hist_frankfurter_usd(symbols, days):
+    """Séries USD->BRL e USD->CNY no Frankfurter (grátis, sem chave).
+    Retorna dict {data: {BRL, CNY}}. Período = days+15 corridos."""
+    days = int(days)
+    end = datetime.now(timezone.utc).date()
+    beg = end - timedelta(days=days + 15)
+    url = ("https://api.frankfurter.dev/v1/"
+           f"{beg.isoformat()}..{end.isoformat()}?base=USD&symbols={symbols}")
+    d = _get_json(url, {"User-Agent": BROWSER_UA}, timeout=20)
+    rates = d.get("rates") or {}
+    out = {}
+    for dt, mp in rates.items():
+        try:
+            out[str(dt)] = {k: float(v) for k, v in mp.items()}
+        except Exception:
+            continue
+    if len(out) < 2:
+        raise ValueError("frankfurter: poucos pontos")
+    return out
+
+
+def _hist_fx_frankfurter(pair, days):
+    """Degrau Frankfurter p/ USD-BRL direto ou CNY-BRL derivado
+    (CNYBRL = USDBRL/USDCNY do mesmo dia)."""
+    days = int(days)
+    mp = _hist_frankfurter_usd("BRL,CNY", days)
+    pts = []
+    if pair == "USD-BRL":
+        for dt in sorted(mp):
+            v = mp[dt].get("BRL")
+            if v and v > 0:
+                pts.append((dt, v))
+    elif pair == "CNY-BRL":
+        for dt in sorted(mp):
+            b, c = mp[dt].get("BRL"), mp[dt].get("CNY")
+            if b and c and c > 0:
+                pts.append((dt, b / c))
+    else:
+        raise ValueError(f"frankfurter sem par {pair}")
+    if len(pts) < 2:
+        raise ValueError(f"frankfurter {pair}: {len(pts)} ponto(s)")
+    return pts[-days:] if len(pts) > days else pts
+
+
+def _hist_fx_fred(pair, days):
+    """Degrau FRED p/ câmbio: DEXUSEU (BRL/USD) direto; CNY-BRL derivado
+    de DEXUSEU/DEXCHUS no mesmo dia (oficial Fed, EOD)."""
+    days = int(days)
+    if pair == "USD-BRL":
+        pts, _ = _hist_fred(["DEXUSEU"], days + 5)
+        return pts[-days:] if len(pts) > days else pts
+    if pair == "CNY-BRL":
+        ub, _ = _hist_fred(["DEXUSEU"], days + 5)
+        uc, _ = _hist_fred(["DEXCHUS"], days + 5)
+        ucd = dict(uc)
+        out = []
+        for dt, b in ub:
+            c = ucd.get(dt)
+            if c and c > 0:
+                out.append((dt, b / c))
+        if len(out) < 2:
+            raise ValueError("FRED CNY-BRL: juncao vazia")
+        return out[-days:] if len(out) > days else out
+    raise ValueError(f"FRED sem par {pair}")
+
+
+def _hist_fx_olinda(pair, days):
+    """Degrau BCB Olinda PTAX p/ USD-BRL (oficial, EOD; cobre fds com
+    último dia útil). CNY-BRL não existe no Olinda -> levanta."""
+    if pair != "USD-BRL":
+        raise ValueError("olinda só tem USD-BRL")
+    days = int(days)
+    end = datetime.now(timezone.utc).date()
+    beg = end - timedelta(days=days * 3 + 15)
+    d = _get_json(OLINDA_PER.format(d0=beg.isoformat(), d1=end.isoformat()),
+                  {"User-Agent": BROWSER_UA}, timeout=20)
+    rows = d.get("value") or []
+    pts = []
+    for r in rows:
+        try:
+            dt = str(r.get("dataHoraCotacao") or "")[:10]
+            v = float(r.get("cotacaoVenda"))
+            if v > 0 and len(dt) == 10:
+                pts.append((dt, v))
+        except Exception:
+            continue
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError("olinda: poucos pontos")
+    return pts[-days:] if len(pts) > days else pts
+
+
+def _hist_fx(pair, days):
+    """Histórico de câmbio com cadeia perfeita (espelha o fetch_usdbrl):
+    awesomeapi -> frankfurter -> FRED -> Olinda (só USD-BRL). Cada degrau
+    logado; cadeia morta levanta com os erros (o fetch_history cai pro log
+    local)."""
+    days = int(days)
+    errs = []
+    chain = [("awesomeapi", lambda: _hist_fx_awesome(pair, days)),
+             ("frankfurter", lambda: _hist_fx_frankfurter(pair, days)),
+             ("FRED", lambda: _hist_fx_fred(pair, days))]
+    if pair == "USD-BRL":
+        chain.append(("olinda", lambda: _hist_fx_olinda(pair, days)))
+    for name, fn in chain:
+        try:
+            pts = fn()
+            tag = f"{name} {pair}" if name == "awesomeapi" else (
+                f"Frankfurter {pair}" if name == "frankfurter" else (
+                    f"FRED {pair}" if name == "FRED" else f"BCB Olinda {pair}"))
+            return pts, tag
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            log(f"hist fx {pair}: {name} falhou ({e})")
+    raise RuntimeError(f"FX {pair} sem serie (" + "; ".join(errs) + ")")
 
 
 def _hist_sge(instid, days):
@@ -1307,6 +1564,93 @@ def _hist_yield_api(mat, days):
     return pts[-days:] if len(pts) > days else pts, "Investing.com (API)"
 
 
+def _hist_investing_histssr(slug, days, lo, hi, label):
+    """Fallback SSR da página historical-data do Investing (padrão _hist_cds):
+    ~1 mês de série EOD. Serve quando a API financialdata cai mas o SSR abre.
+    `slug` = slug do instrumento (ex: brazil-10-year-bond-yield)."""
+    days = int(days)
+    url = f"https://www.investing.com/rates-bonds/{slug}-historical-data"
+    html = _http_get(url, {"User-Agent": BROWSER_UA,
+                           "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=25).decode("utf-8", "replace")
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not m:
+        raise ValueError(f"HistSSR {label} sem __NEXT_DATA__")
+    data = json.loads(m.group(1))
+    rows = (data.get("props", {}).get("pageProps", {}).get("state", {})
+            .get("historicalDataStore", {}).get("historicalData", {})
+            .get("data")) or []
+    pts = []
+    for r in rows:
+        try:
+            dt = str(r.get("rowDateTimestamp") or "")[:10]
+            raw = (r.get("last_closeRaw")
+                   if r.get("last_closeRaw") is not None else r.get("last_close"))
+            v = _to_float(raw)
+            if v and lo < v < hi and len(dt) == 10:
+                pts.append((dt, v))
+        except Exception:
+            continue
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError(f"HistSSR {label} sem serie")
+    return pts[-days:] if len(pts) > days else pts, "Investing.com (HistSSR)"
+
+
+def _hist_yield_ssr(mat, days):
+    """Fallback do gráfico BR quando a API cai: SSR da historical-data."""
+    meta = YIELD_MATS.get(mat)
+    if not meta:
+        raise ValueError(f"vencimento desconhecido: {mat}")
+    return _hist_investing_histssr(meta["slug"], days,
+                                   YIELD_LO, YIELD_HI, f"BR {mat}")
+
+
+def _hist_yield(mat, days):
+    """Yield BR com cadeia perfeita (espelha o preço): API -> HistSSR.
+    Cada degrau logado; cadeia morta cai pro log local no fetch_history."""
+    errs = []
+    try:
+        return _hist_yield_api(mat, days)
+    except Exception as e:
+        errs.append(f"api: {e}")
+        log(f"hist yield {mat}: API falhou ({e}); fallback HistSSR")
+    try:
+        return _hist_yield_ssr(mat, days)
+    except Exception as e:
+        errs.append(f"histssr: {e}")
+    raise RuntimeError(f"yield {mat} sem serie (" + "; ".join(errs) + ")")
+
+
+def _hist_us_yield_ssr(mat, days):
+    """Fallback do gráfico UST quando a API cai: SSR da historical-data."""
+    meta = US_YIELD_MATS.get(mat)
+    if not meta:
+        raise ValueError(f"vencimento desconhecido: {mat}")
+    return _hist_investing_histssr(meta["slug"], days,
+                                   US_YIELD_LO, US_YIELD_HI, f"US {mat}")
+
+
+def _hist_us_yield(mat, days):
+    """Yield US com cadeia perfeita: API -> HistSSR -> FRED (oficial)."""
+    errs = []
+    try:
+        return _hist_us_yield_api(mat, days)
+    except Exception as e:
+        errs.append(f"api: {e}")
+        log(f"hist us_yield {mat}: API falhou ({e}); fallback HistSSR")
+    try:
+        return _hist_us_yield_ssr(mat, days)
+    except Exception as e:
+        errs.append(f"histssr: {e}")
+        log(f"hist us_yield {mat}: HistSSR falhou ({e}); fallback FRED")
+    try:
+        return _hist_us_yield_fred(mat, days)
+    except Exception as e:
+        errs.append(f"fred: {e}")
+    raise RuntimeError(f"us_yield {mat} sem serie (" + "; ".join(errs) + ")")
+
+
 def _hist_us_yield_api(mat, days):
     """Série diária do yield nominal do vencimento `mat` (UST) via API
     historical do Investing (a MESMA do CDS v7.1; cabeçalho 'domain-id'
@@ -1355,27 +1699,81 @@ def _hist_us_yield_fred(mat, days):
 def _hist_oilprice_blend(blend_id, days, label):
     """Série histórica de um blend no endpoint JSON do OilPrice.com.
     Períodos do blend: 4=1M (~20 pts), 6=3M (~61), 5=1A (~251).
-    Pontos vêm em epoch; normaliza p/ data UTC deduplicada."""
+    Pontos vêm em epoch; normaliza p/ data UTC deduplicada. Com fallback
+    de período (espelha a cadeia do preço tabela->json): tenta o período
+    ideal, depois o 1A completo (mais pontos p/ recortar), depois o 3M."""
     days = int(days)
     if days <= 40:
-        period = 4
+        periods = (4, 6, 5)
     elif days <= 120:
-        period = 6
+        periods = (6, 5, 4)
     else:
-        period = 5
-    pts, _lc, _u = _oilprice_json_period(blend_id, period)
-    by = {}
-    for t, v in pts:
+        periods = (5, 6, 4)
+    errs = []
+    for period in periods:
         try:
-            if v > 0:
-                by[datetime.fromtimestamp(t, timezone.utc)
-                   .strftime("%Y-%m-%d")] = v
-        except Exception:
-            continue
-    ser = sorted(by.items())
-    if len(ser) < 2:
-        raise ValueError(f"OilPrice {label} sem serie")
-    return ser[-days:] if len(ser) > days else ser, f"OilPrice.com"
+            pts, _lc, _u = _oilprice_json_period(blend_id, period)
+            by = {}
+            for t, v in pts:
+                try:
+                    if v > 0:
+                        by[datetime.fromtimestamp(t, timezone.utc)
+                           .strftime("%Y-%m-%d")] = v
+                except Exception:
+                    continue
+            ser = sorted(by.items())
+            if len(ser) < 2:
+                raise ValueError(f"periodo {period}: {len(ser)} ponto(s)")
+            cut = ser[-days:] if len(ser) > days else ser
+            if len(cut) >= 2:
+                tag = "OilPrice.com" + ("" if period == periods[0]
+                                        else f" (periodo {period})")
+                return cut, tag
+            raise ValueError(f"periodo {period}: janela curta ({len(cut)})")
+        except Exception as e:
+            errs.append(f"p{period}: {e}")
+            log(f"hist {label}: OilPrice periodo {period} falhou ({e})")
+    raise RuntimeError(f"OilPrice {label} sem serie (" + "; ".join(errs) + ")")
+
+
+def _hist_urea_br_yahoo(days):
+    """Histórico do CFR Brasil via Yahoo UFB=F (q1->q2, igual o preço).
+    Sem série pública em janela curta o Yahoo pode voltar <2 pts -> levanta
+    (o fetch_history cai pro log local, que acumula o poller desde a v6.6)."""
+    return _hist_yahoo("UFB=F", days)
+
+
+def _fx_rate_for_hist(hist_log=None):
+    """USDCNY fresco p/ converter as séries CNY (SC/CU/enxofre) no gráfico.
+    Cadeia: fetch_fx() -> última taxa derivada do histórico FX
+    (awesomeapi/frankfurter/FRED via _hist_fx) -> taxa do log local.
+    Nunca usa taxa velha sem avisar: quem chama põe a nota no rodapé."""
+    try:
+        fx = fetch_fx()
+        if fx.get("usdcny") and _fx_fresh(fx):
+            return float(fx["usdcny"]), "câmbio de agora"
+    except Exception as e:
+        log(f"hist fx-rate: fetch_fx falhou ({e}); tentando série histórica")
+    for pair in ("USD-BRL", "CNY-BRL"):
+        pass  # ordem abaixo: precisa das DUAS p/ derivar
+    try:
+        ub, _s1 = _hist_fx("USD-BRL", 5)
+        cb, _s2 = _hist_fx("CNY-BRL", 5)
+        if ub and cb:
+            u, c = float(ub[-1][1]), float(cb[-1][1])
+            if u > 0 and c > 0:
+                return u / c, "USDCNY da série histórica"
+    except Exception as e:
+        log(f"hist fx-rate: série histórica falhou ({e})")
+    try:
+        if hist_log:
+            for k in ("usdcny", "USDCNY", "fx_usdcny"):
+                ser = hist_log_series(hist_log, k, 7)
+                if len(ser) >= 1:
+                    return float(ser[-1][1]), "USDCNY do cache local"
+    except Exception:
+        pass
+    raise ValueError("sem câmbio fresco p/ converter a série")
 
 
 def _hist_urals(days):
@@ -1413,27 +1811,27 @@ def _hist_sc_sina_kline():
     return pts
 
 
-def _hist_sc(days):
+def _hist_sc(days, hist_log=None):
     """Série p/ o gráfico do SC: kline diário do contínuo (CNY/bbl) —
     Eastmoney 142.scm -> Sina SC0 (fontes independentes) — convertida
-    ÷ USDCNY de AGORA (nota no rodapé do popup, como no enxofre). Sem
-    câmbio fresco ou com as duas séries mortas: levanta (o fetch_history
-    cai pro log local, que acumula US$/bbl desde a v6.8)."""
+    ÷ USDCNY (nota no rodapé do popup, como no enxofre). Câmbio com
+    fallback (_fx_rate_for_hist); sem câmbio ou com as duas séries mortas:
+    levanta (o fetch_history cai pro log local, que acumula US$/bbl)."""
     days = int(days)
-    fx = fetch_fx()
-    if not (fx.get("usdcny") and _fx_fresh(fx)):
-        raise ValueError("sem câmbio fresco p/ converter a série SC")
-    rate = float(fx["usdcny"])
+    rate, rate_src = _fx_rate_for_hist(hist_log)
     try:
         cny_pts, _s0 = _hist_em(EM_SC_SECID, days)
+        src_tag = "push2his"
     except Exception as e:
         log(f"hist SC: push2his falhou ({e}); Sina kline")
         cny_pts = _hist_sc_sina_kline()
+        src_tag = "Sina kline"
     pts = [(d, round(v / rate, 4))
            for d, v in (cny_pts[-days:] if len(cny_pts) > days else cny_pts)]
     if len(pts) < 2:
         raise ValueError(f"SC sem série ({len(pts)} ponto(s))")
-    return pts, f"SC diário (CNY÷{rate:.4f})"
+    extra = "" if rate_src == "câmbio de agora" else f" [{rate_src}]"
+    return pts, f"SC diário (CNY÷{rate:.4f}{extra}; {src_tag})"
 
 
 def _hist_cu_sina_kline():
@@ -1464,27 +1862,27 @@ def _hist_cu_sina_kline():
     return pts
 
 
-def _hist_cu(days):
+def _hist_cu(days, hist_log=None):
     """Série p/ o gráfico do CU0: kline diário do contínuo (CNY/t) —
     Eastmoney 113.cum -> Sina CU0 (fontes independentes) — convertida
-    ÷ USDCNY de AGORA ÷ 2204.62262 (lb/t; nota no rodapé do popup). Sem
-    câmbio fresco ou com as duas séries mortas: levanta (o fetch_history
-    cai pro log local, que acumula US$/lb desde a v7.3)."""
+    ÷ USDCNY ÷ 2204.62262 (lb/t; nota no rodapé do popup). Câmbio com
+    fallback (_fx_rate_for_hist); sem câmbio ou com as duas séries mortas:
+    levanta (o fetch_history cai pro log local, que acumula US$/lb)."""
     days = int(days)
-    fx = fetch_fx()
-    if not (fx.get("usdcny") and _fx_fresh(fx)):
-        raise ValueError("sem câmbio fresco p/ converter a série CU")
-    rate = float(fx["usdcny"])
+    rate, rate_src = _fx_rate_for_hist(hist_log)
     try:
         cny_pts, _s0 = _hist_em(EM_CU_SECID, days)
+        src_tag = "push2his"
     except Exception as e:
         log(f"hist CU: push2his falhou ({e}); Sina kline")
         cny_pts = _hist_cu_sina_kline()
+        src_tag = "Sina kline"
     pts = [(d, round(v / rate / LB_PER_TON, 4))
            for d, v in (cny_pts[-days:] if len(cny_pts) > days else cny_pts)]
     if len(pts) < 2:
         raise ValueError(f"CU sem série ({len(pts)} ponto(s))")
-    return pts, f"SHFE CU0 diário (CNY÷{rate:.4f}÷lb)"
+    extra = "" if rate_src == "câmbio de agora" else f" [{rate_src}]"
+    return pts, f"SHFE CU0 diário (CNY÷{rate:.4f}÷lb{extra}; {src_tag})"
 
 
 def _hist_join(dates_vals, fx_by_date):
@@ -1641,10 +2039,40 @@ HIST_META = {
                    "fmt": lambda v: f"US$ {fmt_usd(v)}/t",
                    "yfmt": lambda v: f"{v:,.0f}",
                    "ranges": (7, 30, 90, 180, 365)},
+    "crb":        {"title": "TR/CC CRB Excess Return (pts)",
+                   "fmt": lambda v: f"{fmt_usd(v)}",
+                   "yfmt": lambda v: f"{v:,.0f}",
+                   "ranges": (7, 30, 90, 180, 365)},
 }
 
 
+def _hist_cache_fallback(hist_log, key, base, days, err):
+    """Último degrau de TODO gráfico (escolha do usuário): cache local com
+    aviso. Tenta a chave cheia (ex: br_yield:10a), depois a base (br_yield).
+    Aceita 1+ ponto (popup desenha o ponto + 'janela parcial'); 0 pontos
+    devolve None (o chamador levanta o erro remoto original)."""
+    if not hist_log:
+        return None
+    for k in (key, base) if base != key else (key,):
+        try:
+            fb = hist_log_series(hist_log, k, days)
+        except Exception:
+            continue
+        if len(fb) >= 2:
+            return {"points": fb, "src": "cache local",
+                    "note": f"offline: série remota falhou ({err})"}
+        if len(fb) == 1:
+            return {"points": fb, "src": "cache local (1 ponto)",
+                    "note": f"offline: só 1 ponto em cache ({err})"}
+    return None
+
+
 def fetch_history(key, days=30, hist_log=None):
+    """Histórico p/ os gráficos com fallback perfeito (espelha os preços):
+    cada ativo tenta a cadeia remota (Yahoo q1->q2->Stooq, FX awesome->
+    frankfurter->FRED->Olinda, Investing API->SSR->FRED, EM<->SGE, etc.)
+    e, se TUDO falhar, cai no cache local com aviso (escolha do usuário).
+    Falha isolada por ativo: levanta só se nem o cache tiver 1 ponto."""
     days = int(days)
     base = key
     bank_name = None
@@ -1673,7 +2101,7 @@ def fetch_history(key, days=30, hist_log=None):
         elif base == "copper":
             pts, src = _hist_yahoo("HG=F", days)
         elif base == "cu_shfe":
-            pts, src = _hist_cu(days)
+            pts, src = _hist_cu(days, hist_log)
         elif base == "gc_f":
             pts, src = _hist_yahoo("GC=F", days)
         elif base == "ho_f":
@@ -1683,7 +2111,7 @@ def fetch_history(key, days=30, hist_log=None):
         elif base == "urals":
             pts, src = _hist_urals(days)
         elif base == "sc_f":
-            pts, src = _hist_sc(days)
+            pts, src = _hist_sc(days, hist_log)
         elif base == "murban":
             pts, src = _hist_murban(days)
         elif base in ("sge_au9999", "sge_autd"):
@@ -1692,7 +2120,8 @@ def fetch_history(key, days=30, hist_log=None):
             try:
                 cny_pts, s0 = _hist_sge(inst, days + 10)
                 s0 = f"SGE {inst}"
-            except Exception:
+            except Exception as e0:
+                log(f"hist {base}: SGE falhou ({e0}); Eastmoney")
                 cny_pts, s0 = _hist_em(sec, days + 10)
             try:
                 fx, s1 = _hist_fx("CNY-BRL", days + 10)
@@ -1700,7 +2129,7 @@ def fetch_history(key, days=30, hist_log=None):
                 if len(joined) < 2:
                     raise ValueError("juncao SGE x CNYBRL vazia")
                 pts = joined[-days:] if len(joined) > days else joined
-                src = f"{s0} x CNYBRL"
+                src = f"{s0} x CNYBRL ({s1})"
             except Exception as e2:
                 pts = cny_pts[-days:] if len(cny_pts) > days else cny_pts
                 src = s0
@@ -1711,7 +2140,8 @@ def fetch_history(key, days=30, hist_log=None):
             try:
                 cny_pts, _s0 = _hist_em("113.aum", days + 10)
                 s0 = "SHFE"
-            except Exception:
+            except Exception as e0:
+                log(f"hist shfe: EM falhou ({e0}); SGE proxy")
                 cny_pts, s0 = _hist_sge("Au99.99", days + 10)
                 s0 = "SGE Au99.99 (proxy SHFE)"
                 n2 = "SHFE sem serie: referencia SGE"
@@ -1749,32 +2179,27 @@ def fetch_history(key, days=30, hist_log=None):
         elif base == "cds_5y":
             pts, src = _hist_cds(days)
         elif base == "br_yield":
-            pts, src = _hist_yield_api(key.split(":", 1)[1], days)
+            pts, src = _hist_yield(key.split(":", 1)[1], days)
         elif base == "us_yield":
-            _umat = key.split(":", 1)[1]
-            try:
-                pts, src = _hist_us_yield_api(_umat, days)
-            except Exception:
-                pts, src = _hist_us_yield_fred(_umat, days)
+            pts, src = _hist_us_yield(key.split(":", 1)[1], days)
         elif base == "urea_me":
             pts, src = _hist_urea_me(days)
         elif base == "urea_br":
-            raise ValueError("UFB=F sem série pública (histórico no log local)")
+            try:
+                pts, src = _hist_urea_br_yahoo(days)
+            except Exception as e0:
+                log(f"hist urea_br: Yahoo UFB=F falhou ({e0}); log local")
+                raise ValueError(f"UFB=F sem série pública ({e0})")
         elif base == "sulfur":
-            pts, src = _hist_sulfur(days)
+            pts, src = _hist_sulfur(days, hist_log)
+        elif base == "crb":
+            pts, src = _hist_crb(days)
         else:
             raise ValueError(f"ativo desconhecido: {key}")
     except Exception as e:
-        if hist_log:
-            fb = hist_log_series(hist_log, key, days)
-            if len(fb) >= 2:
-                return {"points": fb, "src": "cache local",
-                        "note": f"serie remota falhou ({e})"}
-            if base != key:
-                fb = hist_log_series(hist_log, base, days)
-                if len(fb) >= 2:
-                    return {"points": fb, "src": "cache local",
-                            "note": f"serie remota falhou ({e})"}
+        fb = _hist_cache_fallback(hist_log, key, base, days, e)
+        if fb is not None:
+            return fb
         raise
     return {"points": pts, "src": src, "note": note}
 
@@ -3566,10 +3991,10 @@ def fetch_sulfur(fx):
         return r
     raise RuntimeError("enxofre sem fonte viva (" + "; ".join(errs) + ")")
 
-def _hist_sulfur(days):
+def _hist_sulfur(days, hist_log=None):
     """Série p/ o gráfico do enxofre. 7D: tabela do SunSirs (6 pontos
-    reais), convertida CNY->US$ com o câmbio de AGORA (nota no rodapé do
-    popup). Janela maior: o SunSirs só dá 6 dias -> levanta (o
+    reais), convertida CNY->US$ com câmbio via _fx_rate_for_hist (nota no
+    rodapé do popup). Janela maior: o SunSirs só dá 6 dias -> levanta (o
     fetch_history cai pro log local, que acumula US$/t desde a v6.7)."""
     days = int(days)
     if days > 7:
@@ -3582,13 +4007,236 @@ def _hist_sulfur(days):
     for d, v in pts_raw:
         by[d] = v
     ser = sorted(by.items())
-    _, rate = _sulfur_usd(ser[-1][1], fetch_fx())
+    try:
+        rate, rate_src = _fx_rate_for_hist(hist_log)
+    except Exception:
+        # Compat: tenta o caminho antigo (câmbio do ciclo) antes de desistir.
+        _, rate = _sulfur_usd(ser[-1][1], fetch_fx())
+        rate_src = "câmbio de agora"
     if not rate:
         raise ValueError("sem câmbio p/ converter a série SunSirs")
     pts = [(d, round(v / rate, 4)) for d, v in ser]
     if len(pts) < 2:
         raise ValueError("SunSirs: série curta")
-    return pts, "SunSirs (CNY÷USDCNY de hoje)"
+    extra = "" if rate_src == "câmbio de agora" else f" [{rate_src}]"
+    return pts, f"SunSirs (CNY÷USDCNY de hoje{extra})"
+
+# ----------------------- FETCH · CRB TR/CC EXCESS RETURN (v8.5) ---------------
+def _crb_ok(v):
+    return bool(v and CRB_LO < float(v) < CRB_HI)
+
+
+def _crb_from_block(blk, src):
+    """Normaliza o bloco __NEXT_DATA__ do Investing p/ o CRB. last = valor
+    vivo; change/changePcr = Δ do dia; prev_close = last - change (lastClose
+    do SSR é corrompido, padrão CDS v5.8). Rejeita fora de CRB_LO..HI e feed
+    congelado (lastUpdateTime > CRB_INV_MAX_AGE)."""
+    price = _to_float(blk.get("last"))
+    if not _crb_ok(price):
+        raise ValueError("Investing CRB sem preço válido")
+    lut = _to_float(blk.get("lastUpdateTime"))
+    if not lut:
+        raise ValueError("Investing CRB sem lastUpdateTime")
+    age = time.time() - lut / 1000.0
+    if age > CRB_INV_MAX_AGE:
+        raise ValueError(f"CRB cotação velha ({age / 86400:.1f} d)")
+    chg = _to_float(blk.get("change"))
+    pct = _to_float(blk.get("changePcr"))
+    prev = round(price - chg, 4) if chg is not None else None
+    if pct is None and prev and prev > 0:
+        pct = (price / prev - 1.0) * 100.0
+    day = datetime.fromtimestamp(lut / 1000.0, timezone.utc).strftime("%Y-%m-%d")
+    return {"price": price, "pct": pct, "day_chg": chg, "prev_close": prev,
+            "day": day, "src": src, "ts": time.time()}
+
+
+def _fetch_crb_inv_url(url, tag):
+    html = _http_get(url, {"User-Agent": BROWSER_UA,
+                           "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=25).decode("utf-8", "replace")
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not m:
+        raise ValueError(f"{tag}: página sem __NEXT_DATA__")
+    data = json.loads(m.group(1))
+    # Caminho exato do instrumento (imune a blocos ProRatings com last+LUT
+    # que o _inv_price_block genérico poderia pegar primeiro).
+    blk = ((data.get("props", {}).get("pageProps", {}).get("state", {})
+            .get("indexStore", {}).get("instrument", {}).get("price")) or None)
+    if isinstance(blk, dict) and _to_float(blk.get("last")):
+        try:
+            return _crb_from_block(blk, "Investing.com")
+        except Exception:
+            pass  # cai no genérico abaixo (ex.: feed congelado)
+    blk = _inv_price_block(data)
+    if not blk:
+        raise ValueError(f"{tag}: SSR sem bloco de cotação")
+    r = _crb_from_block(blk, "Investing.com")
+    # Guarda anti-troca: se o genérico pegou um ProRatings (ex. 46.48) em vez
+    # do índice (418), o valor ainda passa em _crb_ok — então exige que o
+    # bloco tenha change/changePcr numéricos de índice (ProRatings vem None).
+    if r.get("pct") is None and r.get("day_chg") is None:
+        raise ValueError(f"{tag}: bloco sem variação (provável ProRatings)")
+    return r
+
+
+def fetch_crb_inv():
+    """CRB Excess Return no Investing www (SSR __NEXT_DATA__)."""
+    return _fetch_crb_inv_url(INV_CRB_URL, "Inv-CRB")
+
+
+def fetch_crb_inv_m():
+    """CRB Excess Return no Investing m. (host reserva, mesmo SSR)."""
+    return _fetch_crb_inv_url(INV_CRB_URL_M, "Inv-CRB-m")
+
+
+def fetch_crb_inv_hist():
+    """CRB Excess Return na API historical do Investing (pair 39972, mesma
+    do CDS/yields; header domain-id obrigatório). Última row = linha de
+    hoje (intraday conferido 28/09/2026: 418.54); pct = change_precent da
+    row (fallback: vs fechamento anterior)."""
+    end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    beg = (datetime.now(timezone.utc) - timedelta(days=11)).strftime("%Y-%m-%d")
+    url = INV_CDS_API_FMT.format(pair=INV_CRB_PAIR_ID, beg=beg, end=end)
+    d = _get_json(url, {"User-Agent": BROWSER_UA,
+                        "Accept": "application/json",
+                        "domain-id": "www"}, timeout=20)
+    rows = d.get("data") or []
+    pts = []
+    for r in rows:
+        dt = str(r.get("rowDateTimestamp") or "")[:10]
+        raw = (r.get("last_closeRaw")
+               if r.get("last_closeRaw") is not None else r.get("last_close"))
+        v = _to_float(raw)
+        if v and _crb_ok(v) and len(dt) == 10:
+            pts.append((dt, v, r))
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError("API CRB sem série")
+    (dt, price, row) = pts[-1]
+    prev = pts[-2][1]
+    pct = _to_float(row.get("change_precentRaw"))
+    if pct is None:
+        pct = _to_float(row.get("change_precent"))
+    if pct is None and prev and prev > 0:
+        pct = (price / prev - 1.0) * 100.0
+    chg = round(price - prev, 4) if prev else None
+    return {"price": price, "pct": pct, "day_chg": chg,
+            "prev_close": prev, "day": dt,
+            "src": "Investing.com (API)", "ts": time.time()}
+
+
+def fetch_crb_inv_histssr():
+    """CRB Excess Return na página historical-data do Investing (SSR
+    __NEXT_DATA__ historicalDataStore, padrão _hist_cds). EOD; serve de
+    degrau quando a API historical cai mas o SSR abre."""
+    html = _http_get(INV_CRB_HIST_URL,
+                     {"User-Agent": BROWSER_UA,
+                      "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=25).decode("utf-8", "replace")
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not m:
+        raise ValueError("HistSSR CRB sem __NEXT_DATA__")
+    data = json.loads(m.group(1))
+    rows = (data.get("props", {}).get("pageProps", {}).get("state", {})
+            .get("historicalDataStore", {}).get("historicalData", {})
+            .get("data")) or []
+    pts = []
+    for r in rows:
+        dt = str(r.get("rowDateTimestamp") or "")[:10]
+        raw = (r.get("last_closeRaw")
+               if r.get("last_closeRaw") is not None else r.get("last_close"))
+        v = _to_float(raw)
+        if v and _crb_ok(v) and len(dt) == 10:
+            pts.append((dt, v))
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError("HistSSR CRB sem série")
+    (dt, price), (_, prev) = pts[-1], pts[-2]
+    pct = (price / prev - 1.0) * 100.0 if prev and prev > 0 else None
+    return {"price": price, "pct": pct,
+            "day_chg": round(price - prev, 4) if prev else None,
+            "prev_close": prev, "day": dt,
+            "src": "Investing.com (HistSSR)", "ts": time.time()}
+
+
+def fetch_crb():
+    """TR/CC CRB Excess Return, pontos. Cadeia pura 418 (v8.5, cada fonte
+    com cooldown próprio; 429 = falha dupla):
+    Investing-www -> Investing-m. -> API historical -> HistSSR -> cache
+    (camada de cima mantém). Yahoo/TE/DBC FORA (404 / base 539 / ETF 32 —
+    decisão do usuário). Falha isolada das demais seções."""
+    cands = (
+        ("Inv-CRB", fetch_crb_inv, CRB_REFETCH),
+        ("Inv-CRB-m", fetch_crb_inv_m, CRB_REFETCH),
+        ("Inv-CRB-API", fetch_crb_inv_hist, CRB_REFETCH),
+        ("Inv-CRB-HistSSR", fetch_crb_inv_histssr, CRB_REFETCH),
+    )
+    errs = []
+    for name, fn, iv in cands:
+        if not _src_due(name):
+            errs.append(f"{name}: em cooldown")
+            continue
+        try:
+            r = fn()
+            _src_clear(name)
+            return r
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            _src_cooldown(name, iv, str(e))
+    raise RuntimeError("CRB sem fonte viva (" + "; ".join(errs) + ")")
+
+
+def _hist_crb(days):
+    """Série diária do CRB p/ o gráfico. API historical (pair 39972) em 1º;
+    HistSSR em 2º; janela maior cai pro log local (fetch_history)."""
+    days = int(days)
+    try:
+        end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        beg = (datetime.now(timezone.utc) - timedelta(days=days + 10)
+               ).strftime("%Y-%m-%d")
+        url = INV_CDS_API_FMT.format(pair=INV_CRB_PAIR_ID, beg=beg, end=end)
+        d = _get_json(url, {"User-Agent": BROWSER_UA,
+                            "Accept": "application/json",
+                            "domain-id": "www"}, timeout=20)
+        pts = []
+        for r in d.get("data") or []:
+            dt = str(r.get("rowDateTimestamp") or "")[:10]
+            raw = (r.get("last_closeRaw")
+                   if r.get("last_closeRaw") is not None
+                   else r.get("last_close"))
+            v = _to_float(raw)
+            if v and _crb_ok(v) and len(dt) == 10:
+                pts.append((dt, v))
+        pts.sort()
+        if len(pts) >= 2:
+            pts = pts[-days:] if len(pts) > days else pts
+            return pts, "Investing.com (API)"
+    except Exception as e:
+        log(f"hist crb: API falhou ({e}); fallback HistSSR")
+    html = _http_get(INV_CRB_HIST_URL,
+                     {"User-Agent": BROWSER_UA,
+                      "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=25).decode("utf-8", "replace")
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not m:
+        raise ValueError("HistSSR CRB sem __NEXT_DATA__")
+    data = json.loads(m.group(1))
+    rows = (data.get("props", {}).get("pageProps", {}).get("state", {})
+            .get("historicalDataStore", {}).get("historicalData", {})
+            .get("data")) or []
+    pts = []
+    for r in rows:
+        dt = str(r.get("rowDateTimestamp") or "")[:10]
+        raw = (r.get("last_closeRaw")
+               if r.get("last_closeRaw") is not None else r.get("last_close"))
+        v = _to_float(raw)
+        if v and _crb_ok(v) and len(dt) == 10:
+            pts.append((dt, v))
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError("HistSSR CRB sem série")
+    pts = pts[-days:] if len(pts) > days else pts
+    return pts, "Investing.com (HistSSR)"
 
 def fetch_sina_future():
     """Futuro SHFE ouro (nf_AU0, contrato main) direto da Sina.
@@ -4914,6 +5562,18 @@ if tk is not None:
             W = max(200, cv.winfo_width() - 4)
             H = max(120, cv.winfo_height() - 4)
             cv.delete("all")
+            if len(pts) == 1:
+                # Cache com 1 ponto (offline total): mostra o ponto + aviso.
+                try:
+                    lab = self.meta.get("yfmt", lambda x: f"{x}")(pts[0][1])
+                except Exception:
+                    lab = f"{pts[0][1]}"
+                cv.create_oval(W // 2 - 4, H // 2 - 4, W // 2 + 4, H // 2 + 4,
+                               fill="#c9a227", outline="")
+                cv.create_text(W // 2, H // 2 + 20,
+                               text=f"{pts[0][0]} · {lab} (1 ponto em cache)",
+                               fill=TXT_DIM, font=("DejaVu Sans", 8))
+                return
             if len(pts) < 2:
                 cv.create_text(W // 2, H // 2, text="sem dados", fill=TXT_DIM)
                 return
@@ -5187,6 +5847,15 @@ class GoldWidget:
                                      font=("DejaVu Sans", 7))
         self.l_sulfur_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
+        # ------------- seção ÍNDICES · CRB EXCESS RETURN (v8.5) ---------------
+        self.crb_frame = tk.Frame(self.body, bg=BG)
+        self.crb_frame.pack(anchor="w", padx=12, fill="x")
+        self._crb_sig = None
+        self._crb_refs = []
+        self.l_crb_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 7))
+        self.l_crb_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
         # ----------------------- menu de botão direito ----------------------
         self.menu = tk.Menu(root, tearoff=0)
         self.menu.add_command(label="Atualizar agora", command=self.update_now)
@@ -5239,7 +5908,8 @@ class GoldWidget:
                     ("Urals (Rússia)", "urals"),
                     ("Uréia (spot intl.)", "urea_me"),
                     ("Uréia CFR Brasil", "urea_br"),
-                    ("Enxofre (spot CN)", "sulfur")):
+                    ("Enxofre (spot CN)", "sulfur"),
+                    ("CRB Excess Return", "crb")):
                 gmenu.add_command(label=_lbl,
                                   command=lambda k=_hk: self.open_history(k))
             gmenu.add_command(
@@ -5287,7 +5957,7 @@ class GoldWidget:
                          (self.l_sc_sub, None),
                          (self.l_murban_sub, None),
                          (self.l_urals_sub, None), (self.l_urea_sub, None),
-                         (self.l_sulfur_sub, None)):
+                         (self.l_sulfur_sub, None), (self.l_crb_sub, None)):
             self._bind(w, hk)
 
         # ------------- v7.1: rolagem oculta (wheel, sem scrollbar) ----------
@@ -6030,6 +6700,22 @@ class GoldWidget:
             self.last.pop("sulfur", None)
             log("enxofre: cache >14 dias sem fonte; removido")
 
+        # ---- ÍNDICES · CRB Excess Return (v8.5): diário/delayed, refetch
+        #      15min; cadeia pura 418 Investing-www -> m. -> API -> HistSSR
+        #      -> cache 7d; Yahoo/TE/DBC FORA (404/base 539/ETF) ----
+        cb = self.last.get("crb")
+        if _due("crb", cb, CRB_REFETCH):
+            try:
+                self.last["crb"] = fetch_crb()
+                _cooldown_clear("crb")
+            except Exception as e:
+                log(f"CRB indisponível ({e}); mantendo cache")
+                _cooldown("crb", CRB_REFETCH, str(e))
+        cb = self.last.get("crb")
+        if cb and time.time() - cb.get("ts", 0) > CRB_MAX_AGE:
+            self.last.pop("crb", None)
+            log("CRB: cache >7 dias sem fonte; removido")
+
         # ---- Câmbio · USD/BRL (v8.2): refetch 90s; cadeia 10 degraus
         #      (intraday -> BCB); falha da cadeia mantém cache ≤24h ----
         ub = self.last.get("usdbrl")
@@ -6159,6 +6845,9 @@ class GoldWidget:
             _sf = _L.get("sulfur") or {}
             if _sf.get("price") and _sf.get("usdcny_used"):
                 log_hist_point(_H, "sulfur", _sf["price"])
+            _cb = _L.get("crb") or {}
+            if _cb.get("price"):
+                log_hist_point(_H, "crb", _cb["price"])
             save_hist_log(_H)
         except Exception as e:
             log(f"falha no log de historico: {e}")
@@ -6281,6 +6970,10 @@ class GoldWidget:
         # seção ENXOFRE · spot CN (v6.7)
         self._render_sulfur()
         self._render_sulfur_sub()
+
+        # seção ÍNDICES · CRB Excess Return (v8.5)
+        self._render_crb()
+        self._render_crb_sub()
 
         # re-encosta no canto com a largura real (a menos que o user arrastou)
         if not self._user_moved:
@@ -7493,6 +8186,81 @@ class GoldWidget:
             parts.append(" · ".join(p))
         self.l_sulfur_sub.config(text="  ·  ".join(parts), fg=TXT_DIM)
 
+    # ---------------- exibição · seção ÍNDICES · CRB (v8.5) ------------------
+    def _crb_rows(self):
+        d = self.last.get("crb") or {}
+        rows = []
+        if d.get("price"):
+            rows.append((("h", "── ÍNDICES · CRB EXCESS RETURN ──"), None, None))
+            nome = "TR/CC CRB"
+            if d.get("ts") and time.time() - d["ts"] > CRB_REFETCH * 2:
+                nome += " · (cache)"
+            rows.append((("r", nome),
+                         f"{fmt_usd(d['price'])}", d.get("pct")))
+        return rows
+
+    def _render_crb(self):
+        rows = self._crb_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._crb_sig:
+            for w in self.crb_frame.winfo_children():
+                w.destroy()
+            self._crb_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.crb_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._crb_refs.append(("h", lab))
+                else:
+                    ln = tk.Label(self.crb_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.crb_frame, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.crb_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, "crb")
+                    self._crb_refs.append(("r", ln, lp, lv))
+                grid += 1
+            self.crb_frame.columnconfigure(0, weight=1)
+            self._crb_sig = sig
+
+        for ref, r in zip(self._crb_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, pct = r[1], r[2]
+            lp.config(text=price_str, fg=TXT_USD)
+            if pct is None:
+                lv.config(text="")
+            else:
+                lv.config(text=fmt_pct(pct),
+                          fg=UP_COLOR if pct >= 0 else DOWN_COLOR)
+
+    def _render_crb_sub(self):
+        d = self.last.get("crb") or {}
+        parts = []
+        if d.get("price"):
+            p = [f"spot {d.get('src', '?')}"]
+            if d.get("day"):
+                p.append(str(d["day"]))
+            if d.get("ts"):
+                p.append(f"há {max(0, int(time.time() - d['ts']))}s")
+            if d.get("day_chg") is not None:
+                p.append(f"Δ {d['day_chg']:+.2f}")
+            parts.append(" · ".join(p))
+        self.l_crb_sub.config(text="  ·  ".join(parts), fg=TXT_DIM)
+
     def _tick(self):
         if self.stop.is_set():
             return
@@ -7508,6 +8276,7 @@ class GoldWidget:
         self._render_urals_sub()    # reavalia idade/cache do Urals
         self._render_urea_sub()     # reavalia idade/cache da ureia
         self._render_sulfur_sub()   # reavalia idade/cache do enxofre
+        self._render_crb_sub()      # reavalia idade/cache do CRB
         self._pump_tray_loop()      # v8.3.1: mantém o registro SNI vivo
         self.root.after(5000, self._tick)
 
@@ -7954,6 +8723,21 @@ def dump():
               f"({', '.join(extra) if extra else '—'})")
     except Exception as e:
         print(f"ENXOFRE SPOT CN: FALHOU ({e})")
+
+    try:
+        cb = fetch_crb()
+        last["crb"] = cb
+        extra = []
+        if cb.get("pct") is not None:
+            extra.append(f"{cb['pct']:+.2f}%")
+        if cb.get("day_chg") is not None:
+            extra.append(f"Δ {cb['day_chg']:+.2f}")
+        if cb.get("day"):
+            extra.append(f"dado {cb['day']}")
+        print(f"CRB EXCESS RETURN [{cb['src']}]: {cb['price']:,.2f} pts "
+              f"({', '.join(extra) if extra else '—'})")
+    except Exception as e:
+        print(f"CRB EXCESS RETURN: FALHOU ({e})")
 
     print("\nCHINA/COMEX: removidos a pedido do usuário")
     return 0

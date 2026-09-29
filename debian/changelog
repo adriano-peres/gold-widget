@@ -1,3 +1,11 @@
+gold-widget (8.4.1-1) unstable; urgency=medium
+
+  * Sincroniza payload com o upstream v8.4.1: yields BR/UST + bandeja
+    Ayatana + trava de instancia unica via flock (2a GUI sai silenciosa,
+    --dump livre).
+
+ -- adrianodev1995 <adriano@a00s.com>  Fri, 25 Sep 2026 18:10:00 -0300
+
 gold-widget (8.2-1) unstable; urgency=medium
 
   * Empacotamento Debian inicial: /usr/bin/gold-widget,

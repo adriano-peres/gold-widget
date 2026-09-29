@@ -17,6 +17,7 @@ Widget de desktop em **Python puro** (tkinter) que vive na sua área de trabalho
 - **Yield do Tesouro dos EUA** — curva **nominal** UST (bills/notes/bonds, % a.a.) com **dropdown ▾** (1m/3m/6m/1a/2a/3a/5a/7a/10a/20a/30a), o tipo (bill/note/bond) no nome do vencimento e Δ em pontos percentuais;
 - **Petróleo e derivados** — NYMEX diesel `HO=F`, Brent `BZ=F`, Crude SC de Xangai, Murban (Emirados) e Urals (Rússia);
 - **Fertilizante e commodity química** — uréia (spot internacional + CFR Brasil) e enxofre spot da China.
+- **Índices · CRB** — TR/CC CRB Excess Return em pontos + var. do dia (cadeia pura Investing, sem misturar base).
 
 > Sem chaves de API, sem pip, sem dependências externas.
 > Só a stdlib: `tkinter` + `urllib` (+ `ctypes` para o truque de camada no X11).
@@ -98,6 +99,9 @@ Uréia CFR Brasil (UFB=F) US$ 475.00/t
 
 ── ENXOFRE · SPOT CN ──
 Enxofre (spot CN)        US$ 1,145.55/t     ± 0.00%
+
+── ÍNDICES · CRB EXCESS RETURN ──
+TR/CC CRB                418.54             ▼ 1.13%
 ```
 
 Cada seção tem um rodapé próprio com a fonte usada, frescor do dado ("há Ns"), dia da cotação, delay de avaliação, faixa do dia, open interest e avisos (`(cache)`, `sem câmbio fresco: valor cru em CNY`).
@@ -150,6 +154,7 @@ Toda fonte tem plano B (e C, D...). Se uma responde erro **ou responde sem dado*
 | **Uréia spot intl.** (US$/t) | TradingEconomics (espelha o FOB Golfo EUA, == CBOT UFV1!) → TradingView scanner → World Bank Pink Sheet (xlsx mensal, série f.o.b. Oriente Médio) → cache 14d | 1 h | 14 dias |
 | **Uréia CFR Brasil** (US$/t) | Yahoo `UFB=F` (CBOT/CME "Urea Granular CFR Brazil", q1→q2) → TradingView `CBOT:UFB1!` → cache 14d | 1 h | 14 dias |
 | **Enxofre spot CN** (CNY/t → US$/t) | TradingEconomics `/commodity/sulfur` → SunSirs (tabela diária; anti-bot `HW_CHECK` replicado em 2 GETs) → cache 14d; US$/t só com USDCNY fresco | 1 h | 14 dias |
+| **TR/CC CRB Excess Return** (pts) | Investing SSR `thomson-reuters---jefferies-crb` (www → m., bloco `indexStore`, `lastClose` corrompido: prev = last − change) → Investing API historical (pair `39972`, linha de hoje) → Investing SSR `historical-data` → cache 7d. Yahoo sem símbolo (404), TE/Bloomberg outra base (539/535) e DBC é ETF (US$ 32): fora da cadeia por decisão | 15 min | 7 dias |
 
 Notas de robustez:
 
@@ -282,6 +287,7 @@ CRUDE URALS [TradingEconomics]: 107.23 US$/bbl (-0.25%, Δ -0.27 · dado None)
 UREIA SPOT [TradingEconomics]: 459.00 US$/t (-0.22%)
 UREIA CFR BRASIL [TradingView]: 475.00 US$/t (—)
 ENXOFRE SPOT CN [TradingEconomics]: 1,145.55 US$/t (+0.00%, cru CNY 7,752.33, USDCNY 6.7674)
+CRB EXCESS RETURN [Investing.com]: 418.54 pts (-1.13%, Δ -4.79, dado 2026-09-25)
 ```
 
 *(valores de uma execução real; mudam a cada chamada)*
@@ -322,6 +328,7 @@ Constantes no topo do `gold_widget.py`:
 | `URALS_REFETCH` / `URALS_MAX_AGE` | `1 h` / `7 dias` | cadência e expiração do Urals |
 | `UREA_REFETCH` / `UREA_MAX_AGE` | `1 h` / `14 dias` | cadência e expiração das duas linhas de uréia |
 | `SULFUR_REFETCH` / `SULFUR_MAX_AGE` | `1 h` / `14 dias` | cadência e expiração do enxofre |
+| `CRB_REFETCH` / `CRB_MAX_AGE` | `15 min` / `7 dias` | cadência e expiração do TR/CC CRB Excess Return |
 | `MIN_W` / `MIN_H` / `EDGE_PX` | `200` / `150` / `6` | tamanho mínimo da janela e espessura da alça de resize (v7.1) |
 | `MARGIN` / `MARGIN_Y` | `16` / `40` | distância da borda ao encostar no canto |
 
