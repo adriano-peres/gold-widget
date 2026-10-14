@@ -552,6 +552,19 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 
 try:
+    import deus_freeze_rf as _DEUS_MOD
+except Exception:
+    try:
+        import importlib.util as _ilu
+        _deus_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "deus_freeze_rf.py")
+        _spec = _ilu.spec_from_file_location("deus_freeze_rf", _deus_path)
+        _DEUS_MOD = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_DEUS_MOD)
+    except Exception:
+        _DEUS_MOD = None
+
+try:
     import tkinter as tk
 except Exception:  # no display / sem tk
     tk = None
@@ -1034,6 +1047,23 @@ CRB_INV_MAX_AGE  = 4 * 86400           # EOD (~1d) + folga fds (sex->seg ~3d)
 CRB_LO           = 50.0                # sanidade (hist 100..540; 418 hoje)
 CRB_HI           = 2000.0              # teto folgado
 
+# ------------------- CONFIG · DEUS-FREEZE RF v3.2 (v8.5) -----------------
+# Termômetro mensal 0-100 de estresse em crédito (rating-free):
+#   25% mkt (VIX+BONDVOL+DISTRESS+OAS/TED) + 15% SLOOS + 25% solv
+#   (NCO FDIC + falências Courts) + 35% freeze (fila/gates).
+# Bandas: 0-30 CALMO / 30-60 ATENÇÃO / 60-80 TRAVA / 80-100 QUEBRA.
+# Mensal por construção: refetch diário é suficiente; cache longo cobre
+# virada de mês + FRED atrasado. Snapshot em data/fred/*.csv garante
+# offline; download runtime tenta atualizar 1x/semana com FRED_UA.
+DEUS_REFETCH     = 6 * 3600            # tenta recalcular no máx. 6/6h
+DEUS_MAX_AGE     = 45 * 86400          # cache vale 45d (mês + atraso FRED)
+DEUS_FRED_MAX_AGE = 7 * 86400          # CSV FRED rebaixa se >7d
+DEUS_FRED_IDS    = (("vix.csv", "VIXCLS"),
+                    ("dgs10.csv", "DGS10"),
+                    ("nco.csv", "CORALACBN"),
+                    ("oas.csv", "BAMLH0A0HYM2"),
+                    ("ted.csv", "TEDRATE"))
+
 # Tradução dos nomes em chinês vindos da xxapi (fonte CJK não é necessária)
 BANK_TR = {
     "工商银行如意金条": "ICBC Ruyi",
@@ -1058,6 +1088,7 @@ BANK_TR = {
 #                  SSR da pagina historical-data, ~1 mes)
 # Sem serie remota (ou se ela falhar): usa o log local acumulado.
 HIST_CACHE_TTL = 600
+HIST_CACHE_TTL_INTRADAY = 60  # P1: 1D muda a cada poll; 600s congelaria o dia
 HIST_FILE      = os.path.join(STATE_DIR, "history.json")
 SGE_DAILYHQ_URL = "https://www.sge.com.cn/graph/Dailyhq"
 EM_KLINE_FMT    = ("https://push2his.eastmoney.com/api/qt/stock/kline/get"
@@ -1183,10 +1214,196 @@ _YAHOO_FRED_PROXY = {"BZ=F": (["DCOILBRENTEU"], 1.0),
                      "HO=F": (["DHOILNYH"], 1.0),
                      "HG=F": (["PCOPPUSDM"], 1.0 / 2204.62262)}
 
+# P0-A — gráfico respeita o MESMO cooldown do preço (namespace compartilhado).
+# O poller bane "Yahoo-HG-q1" por 1800s; o gráfico deve pular o banido em vez
+# de martelar. Quando o Yahoo está saudável, continua primeiro (dado mais
+# fresco); quando banido, vira automaticamente ÚLTIMO (pula p/ proxy/cache).
+_YAHOO_HIST_SRC = {
+    "GC=F":  ("Yahoo-GC-q1",  "Yahoo-GC-q2",  GC_REFETCH),
+    "HG=F":  ("Yahoo-HG-q1",  "Yahoo-HG-q2",  HG_REFETCH),
+    "HO=F":  ("Yahoo-HO-q1",  "Yahoo-HO-q2",  HO_REFETCH),
+    "BZ=F":  ("Yahoo-BZ-q1",  "Yahoo-BZ-q2",  BRENT_REFETCH),
+    "UFB=F": ("Yahoo-UFB-q1", "Yahoo-UFB-q2", UREA_REFETCH),
+}
+
+
+def hist_log_intraday(store, key, hours=24, max_pts=120):
+    """P1 — pontos de HOJE (últimas `hours`h) sem dedupe por dia, p/ o botão
+    1D. Rótulo 'HH:MM' (o popup mostra a hora). Downsample p/ `max_pts`.
+    Retorna [] se <2 pts (o chamador cai no remoto/fallback)."""
+    try:
+        rows = (store.get(key) or []) if isinstance(store, dict) else []
+    except Exception:
+        return []
+    cut = time.time() - int(hours) * 3600
+    pts = []
+    for row in rows:
+        try:
+            t, v = row
+            t, v = float(t), float(v)
+        except Exception:
+            continue
+        if t >= cut and v > 0:
+            pts.append((t, v))
+    pts.sort()
+    if len(pts) > max_pts:
+        step = len(pts) / max_pts
+        pts = [pts[int(i * step)] for i in range(max_pts)]
+    return [(datetime.fromtimestamp(t, timezone.utc).strftime("%H:%M"), v)
+            for t, v in pts]
+
+
+def _hist_yahoo_intraday(sym):
+    """P1 — intraday de hoje do futuro via Yahoo (range=1d, interval=5m).
+    Mesmo cooldown compartilhado do diário (P0-A). Rótulo 'HH:MM' UTC.
+    Levanta se <2 pontos (cai no log intraday do poller)."""
+    _n1, _n2, _iv = _YAHOO_HIST_SRC.get(
+        sym, (f"hist-yahoo-{sym}-q1", f"hist-yahoo-{sym}-q2", GC_REFETCH))
+    errs = []
+    for host, name in (("query1", _n1), ("query2", _n2)):
+        if not _src_due(name):
+            errs.append(f"{host}: em cooldown")
+            continue
+        try:
+            _yahoo_throttle()
+            d = _get_json(
+                f"https://{host}.finance.yahoo.com/v8/finance/chart/"
+                f"{urllib.parse.quote(sym)}?interval=5m&range=1d",
+                {"User-Agent": BROWSER_UA})
+            res = ((d.get("chart") or {}).get("result") or [])
+            if not res:
+                raise ValueError(f"Yahoo {sym} ({host}) sem resultado")
+            ts = res[0].get("timestamp") or []
+            quote = (((res[0].get("indicators") or {}).get("quote"))
+                     or [{}])[0]
+            closes = quote.get("close") or []
+            pts = []
+            for t, c in zip(ts, closes):
+                if c is None:
+                    continue
+                try:
+                    pts.append((datetime.fromtimestamp(
+                        float(t), timezone.utc).strftime("%H:%M"),
+                        float(c)))
+                except Exception:
+                    continue
+            if len(pts) < 2:
+                raise ValueError(f"Yahoo {sym} ({host}) sem serie intraday")
+            _src_clear(name)
+            return pts, f"Yahoo {sym} intraday"
+        except Exception as e:
+            errs.append(f"{host}: {e}")
+            _src_cooldown(name, _iv, str(e))
+            log(f"hist yahoo-intraday {sym}: {host} falhou ({e})")
+    raise RuntimeError(f"Yahoo {sym} intraday sem serie (" +
+                       "; ".join(errs) + ")")
+
+
+_YAHOO_INTRADAY = {"HG=F": "copper", "HO=F": "ho_f", "BZ=F": "brent",
+                   "GC=F": "gc_f", "UFB=F": "urea_br"}
+
+
+# P2 — cobre com série DIÁRIA real (Investing, validado ao vivo 06/10/2026):
+# API financialdata/historical pair 8831 (~1 ano, rows DESC) + SSR da página
+# historical-data (~1 mês EOD). Entram entre o Yahoo e o proxy mensal FRED:
+# Yahoo (fresco, com cooldown P0-A) -> API -> SSR -> FRED mensal -> cache.
+INV_COPPER_PAIR_ID = "8831"
+INV_COPPER_HIST_URL = ("https://www.investing.com/commodities/"
+                       "copper-historical-data")
+
+
+def _hist_copper_inv_api(days):
+    """Série diária do cobre (US$/lb) via API historical do Investing
+    (pair 8831, mesmo padrão do CDS/yields/CRB; header domain-id
+    obrigatório; rows em ordem DESC — sort asc)."""
+    days = int(days)
+    end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    beg = (datetime.now(timezone.utc) - timedelta(days=days + 10)
+           ).strftime("%Y-%m-%d")
+    url = INV_CDS_API_FMT.format(pair=INV_COPPER_PAIR_ID, beg=beg, end=end)
+    d = _get_json(url, {"User-Agent": BROWSER_UA,
+                        "Accept": "application/json",
+                        "domain-id": "www"}, timeout=20)
+    pts = []
+    for r in d.get("data") or []:
+        dt = str(r.get("rowDateTimestamp") or "")[:10]
+        raw = (r.get("last_closeRaw")
+               if r.get("last_closeRaw") is not None else r.get("last_close"))
+        v = _to_float(raw)
+        if v and HG_USD_LO < v < HG_USD_HI and len(dt) == 10:
+            pts.append((dt, v))
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError("API cobre sem serie")
+    return pts[-days:] if len(pts) > days else pts, "Investing.com (API)"
+
+
+def _hist_copper_inv_ssr(days):
+    """Fallback EOD do cobre (~1 mês) via SSR da historical-data."""
+    days = int(days)
+    html = _http_get(INV_COPPER_HIST_URL,
+                     {"User-Agent": BROWSER_UA,
+                      "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=25).decode("utf-8", "replace")
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not m:
+        raise ValueError("HistSSR cobre sem __NEXT_DATA__")
+    data = json.loads(m.group(1))
+    rows = (data.get("props", {}).get("pageProps", {}).get("state", {})
+            .get("historicalDataStore", {}).get("historicalData", {})
+            .get("data")) or []
+    pts = []
+    for r in rows:
+        try:
+            dt = str(r.get("rowDateTimestamp") or "")[:10]
+            raw = (r.get("last_closeRaw")
+                   if r.get("last_closeRaw") is not None
+                   else r.get("last_close"))
+            v = _to_float(raw)
+            if v and HG_USD_LO < v < HG_USD_HI and len(dt) == 10:
+                pts.append((dt, v))
+        except Exception:
+            continue
+    pts.sort()
+    if len(pts) < 2:
+        raise ValueError("HistSSR cobre sem serie")
+    return pts[-days:] if len(pts) > days else pts, "Investing.com (HistSSR)"
+
+
+def _hist_copper(days):
+    """Cobre COMEX com cadeia diária absoluta (P2): Yahoo (fresco; pula se
+    em cooldown, P0-A) -> Investing API (diário real) -> Investing HistSSR
+    (EOD ~1M) -> FRED proxy mensal -> raise (fetch_history cai no cache
+    diário do poller). Cada degrau logado."""
+    days = int(days)
+    errs = []
+    try:
+        return _hist_yahoo("HG=F", days, allow_proxy=False)
+    except Exception as e:
+        errs.append(f"yahoo: {e}")
+        log(f"hist copper: Yahoo falhou ({e}); Investing API")
+    try:
+        return _hist_copper_inv_api(days)
+    except Exception as e:
+        errs.append(f"inv-api: {e}")
+        log(f"hist copper: Investing API falhou ({e}); HistSSR")
+    try:
+        return _hist_copper_inv_ssr(days)
+    except Exception as e:
+        errs.append(f"inv-ssr: {e}")
+        log(f"hist copper: HistSSR falhou ({e}); FRED mensal")
+    try:
+        return _hist_yahoo_fred_proxy("HG=F", days)
+    except Exception as e:
+        errs.append(f"fred-proxy: {e}")
+    raise RuntimeError("cobre sem serie (" + "; ".join(errs) + ")")
+
 
 def _hist_yahoo_fred_proxy(sym, days):
     """Proxy FRED p/ o futuro quando o Yahoo cai (q1+q2). Mesma unidade
-    do futuro (HG converte $/t -> $/lb). Levanta se não houver proxy."""
+    do futuro (HG converte $/t -> $/lb). Levanta se não houver proxy.
+    O proxy do cobre (PCOPPUSDM) é MENSAL: o src leva '(mensal)' p/ o
+    popup não vender 7 pontos mensais como '7D' diário."""
     spec = _YAHOO_FRED_PROXY.get(sym)
     if not spec:
         raise ValueError(f"FRED sem proxy p/ {sym}")
@@ -1198,7 +1415,10 @@ def _hist_yahoo_fred_proxy(sym, days):
     pts = pts[-days:] if len(pts) > days else pts
     if len(pts) < 2:
         raise ValueError(f"FRED proxy {sym}: {len(pts)} ponto(s)")
-    return pts, f"{src} (proxy {sym})"
+    tag = f"{src} (proxy {sym})"
+    if mult != 1.0:
+        tag += " (mensal)"
+    return pts, tag
 
 
 def _hist_stooq(sym, days):
@@ -1228,24 +1448,38 @@ def _hist_stooq(sym, days):
     return pts[-days:] if len(pts) > days else pts
 
 
-def _hist_yahoo(sym, days):
-    """Série diária do Yahoo com fallback perfeito (espelha o preço):
-    query1 -> query2 (mesmo padrão do _fetch_yahoo_future q1->q2 em 429)
-    -> FRED proxy (Brent/heating-oil/cobre oficial) -> (GC=F ainda tenta
-    PAXG como proxy do spot). Stooq removido (JS challenge desde 2026).
-    Cada degrau logado; cadeia morta levanta com os erros (o fetch_history
-    cai pro log local, que acumula o poller)."""
+def _hist_yahoo(sym, days, allow_proxy=True):
+    """Série diária do Yahoo com fallback absoluto (P0-A: espelha o preço).
+    Ordem: Yahoo q1 -> q2 (SÓ se fora de cooldown — senão pula direto p/
+    proxy/cache, sem martelar o banido) -> FRED proxy (Brent/heating-oil/
+    cobre oficial) -> (GC=F ainda tenta PAXG como proxy do spot).
+    allow_proxy=False: só Yahoo puro (p/ cadeias como a do cobre P2, que
+    têm degraus diários próprios antes do proxy mensal).
+    Cooldown COMPARTILHADO com o preço (mesmo namespace _SRC_RETRY):
+    ban do poller protege o gráfico e 429 do gráfico protege o poller.
+    429 conta como falha dupla (dobra o castigo). Cadeia morta levanta com
+    os erros (o fetch_history cai pro log local, que acumula o poller)."""
     days = int(days)
     errs = []
-    for host in ("query1", "query2"):
+    _n1, _n2, _iv = _YAHOO_HIST_SRC.get(
+        sym, (f"hist-yahoo-{sym}-q1", f"hist-yahoo-{sym}-q2", GC_REFETCH))
+    for host, name in (("query1", _n1), ("query2", _n2)):
+        if not _src_due(name):
+            errs.append(f"{host}: em cooldown")
+            log(f"hist yahoo {sym}: {host} em cooldown (pula p/ proxy)")
+            continue
         try:
             _yahoo_throttle()
             pts = _hist_yahoo_one(sym, days, host)
+            _src_clear(name)
             tag = f"Yahoo {sym}" + ("" if host == "query1" else " (q2)")
             return pts, tag
         except Exception as e:
             errs.append(f"{host}: {e}")
+            _src_cooldown(name, _iv, str(e))
             log(f"hist yahoo {sym}: {host} falhou ({e})")
+    if not allow_proxy:
+        raise RuntimeError(f"Yahoo {sym} sem serie (" + "; ".join(errs) + ")")
     try:
         pts, src = _hist_yahoo_fred_proxy(sym, days)
         return pts, src
@@ -1888,7 +2122,12 @@ def _hist_cu(days, hist_log=None):
 def _hist_join(dates_vals, fx_by_date):
     items = sorted(fx_by_date.items())
     out = []
-    for dt, v in dates_vals:
+    for row in dates_vals:
+        try:
+            dt, v = row
+            v = float(v)
+        except Exception:
+            continue  # ponto sujo do remoto: pula sem matar a junção
         f = fx_by_date.get(dt)
         if f is None:
             prev = None
@@ -1898,6 +2137,10 @@ def _hist_join(dates_vals, fx_by_date):
                 else:
                     break
             f = prev
+        try:
+            f = float(f) if f is not None else None
+        except Exception:
+            continue
         if f:
             out.append((dt, v * f))
     return out
@@ -1923,7 +2166,7 @@ def save_hist_log(store):
         pass
 
 
-def log_hist_point(store, key, val, cap=2000):
+def log_hist_point(store, key, val, cap=2000, ts=None):
     if val is None:
         return
     try:
@@ -1933,7 +2176,7 @@ def log_hist_point(store, key, val, cap=2000):
     if not v > 0:
         return
     lst = store.setdefault(key, [])
-    ts = time.time()
+    ts = float(ts) if ts else time.time()
     if lst and ts - lst[-1][0] < 3600:
         try:
             if abs(float(lst[-1][1]) - v) < 1e-9:
@@ -1948,7 +2191,15 @@ def log_hist_point(store, key, val, cap=2000):
 def hist_log_series(store, key, days):
     cut = time.time() - int(days) * 86400
     by = {}
-    for t, v in (store.get(key) or []):
+    try:
+        rows = (store.get(key) or []) if isinstance(store, dict) else []
+    except Exception:
+        return []
+    for row in rows:
+        try:
+            t, v = row
+        except Exception:
+            continue  # linha suja (str/None/3-elem/dict): nunca mata o cache
         try:
             if float(t) >= cut:
                 by[datetime.fromtimestamp(float(t), timezone.utc)
@@ -1956,6 +2207,86 @@ def hist_log_series(store, key, days):
         except Exception:
             continue
     return sorted(by.items())
+
+
+def backfill_hist_log(store):
+    """P0-C — enche o cache de instalações novas com séries remotas longas.
+    Se uma chave tem <5 pts em 30D, busca 365D no remoto e injeta com os
+    timestamps reais (log_hist_point com ts). Roda 1x em thread no boot;
+    falha aqui nunca quebra o widget (log + segue). Retorna nº de pts."""
+    if not isinstance(store, dict):
+        return 0
+    import calendar as _cal
+    added = 0
+
+    def _need(key, base):
+        for k in ((key, base) if base != key else (key,)):
+            if len(hist_log_series(store, k, 30)) >= 5:
+                return False
+        return True
+
+    def _put(key, pts):
+        nonlocal_added = 0
+        for dt, v in pts:
+            try:
+                ts = _cal.timegm(datetime.strptime(
+                    dt[:10], "%Y-%m-%d").replace(
+                        tzinfo=timezone.utc).timetuple())
+                before = len(store.get(key) or [])
+                log_hist_point(store, key, float(v), ts=ts)
+                if len(store.get(key) or []) > before:
+                    nonlocal_added += 1
+            except Exception:
+                continue
+        return nonlocal_added
+
+    jobs = []
+    if _need("spot_usd", "spot_usd"):
+        jobs.append(("spot_usd", lambda: _hist_paxg(365)[0]))
+    if _need("spot_brl", "spot_brl"):
+        def _brl():
+            paxg, _s1 = _hist_paxg(375)
+            fx, _s2 = _hist_fx("USD-BRL", 375)
+            return _hist_join([(d, p / TROY_OZ_GRAMS) for d, p in paxg],
+                              dict(fx))
+        jobs.append(("spot_brl", _brl))
+    if _need("usdbrl", "usdbrl"):
+        jobs.append(("usdbrl", lambda: _hist_fx("USD-BRL", 365)[0]))
+    if _need("copper", "copper"):
+        jobs.append(("copper", lambda: _hist_fred(["PCOPPUSDM"], 900)[0]))
+    if _need("fuel_gas", "fuel_gas"):
+        jobs.append(("fuel_gas", lambda: _hist_fred(["GASREGW"], 400)[0]))
+    if _need("fuel_diesel", "fuel_diesel"):
+        jobs.append(("fuel_diesel",
+                     lambda: _hist_fred(list(DIESEL_FRED_IDS), 400)[0]))
+    if _need("cds_5y", "cds_5y"):
+        jobs.append(("cds_5y", lambda: _hist_cds(365)[0]))
+    if _need("crb", "crb"):
+        jobs.append(("crb", lambda: _hist_crb(365)[0]))
+    for _mat in list(YIELD_MATS)[:3]:
+        if _need(f"br_yield:{_mat}", "br_yield"):
+            jobs.append((f"br_yield:{_mat}",
+                         lambda m=_mat: _hist_yield(m, 365)[0]))
+            break
+    for _mat in ("10a",):
+        if _need(f"us_yield:{_mat}", "us_yield"):
+            jobs.append((f"us_yield:{_mat}",
+                         lambda m=_mat: _hist_us_yield(m, 365)[0]))
+            break
+    for key, fn in jobs:
+        try:
+            pts = fn()
+            if pts and len(pts) >= 2:
+                added += _put(key, pts)
+                log(f"backfill {key}: +{len(pts)} pts remotos")
+        except Exception as e:
+            log(f"backfill {key} falhou ({e})")
+    if added:
+        try:
+            save_hist_log(store)
+        except Exception:
+            pass
+    return added
 
 
 HIST_META = {
@@ -1966,6 +2297,10 @@ HIST_META = {
     "spot_brl":   {"title": "Ouro · Spot (R$/g)",
                    "fmt": lambda v: f"R$ {fmt_brl(v)}/g",
                    "yfmt": lambda v: fmt_brl(v).split(",")[0],
+                   "ranges": (7, 30, 90, 180, 365)},
+    "usdbrl":     {"title": "Câmbio · USD/BRL (R$)",
+                   "fmt": lambda v: f"R$ {fmt_fx4(v)}",
+                   "yfmt": lambda v: f"{v:.2f}".replace(".", ","),
                    "ranges": (7, 30, 90, 180, 365)},
     "copper":     {"title": "Cobre · COMEX HG=F (US$/lb)",
                    "fmt": lambda v: f"US$ {fmt_usd(v)}",
@@ -2018,11 +2353,11 @@ HIST_META = {
     "fuel_gas":   {"title": "EUA · Gasolina (US$/gal)",
                    "fmt": lambda v: f"US$ {v:,.3f}/gal",
                    "yfmt": lambda v: f"{v:.2f}",
-                   "ranges": (30, 90, 180, 365)},
+                   "ranges": (7, 30, 90, 180, 365)},
     "fuel_diesel": {"title": "EUA · Diesel (US$/gal)",
                     "fmt": lambda v: f"US$ {v:,.3f}/gal",
                     "yfmt": lambda v: f"{v:.2f}",
-                    "ranges": (30, 90, 180, 365)},
+                    "ranges": (7, 30, 90, 180, 365)},
     "cds_5y":     {"title": "Brasil · CDS 5 anos (bps)",
                    "fmt": lambda v: f"{fmt_bps(v)} bps",
                    "yfmt": lambda v: f"{v:.0f}",
@@ -2043,7 +2378,17 @@ HIST_META = {
                    "fmt": lambda v: f"{fmt_usd(v)}",
                    "yfmt": lambda v: f"{v:,.0f}",
                    "ranges": (7, 30, 90, 180, 365)},
+    "deus_rf":    {"title": "Crédito · DEUS-Freeze RF (0-100)",
+                   "fmt": lambda v: f"{v:.0f}",
+                   "yfmt": lambda v: f"{v:.0f}",
+                   "ranges": (90, 180, 365, 730, 1825)},
 }
+
+# P1: todo ativo ganha o botão 1D (intraday de hoje). O default do popup
+# continua 30D/7D (o 1D é opt-in por clique).
+for _m in HIST_META.values():
+    _m["ranges"] = (1,) + tuple(d for d in _m["ranges"] if d != 1)
+del _m
 
 
 def _hist_cache_fallback(hist_log, key, base, days, err):
@@ -2067,6 +2412,34 @@ def _hist_cache_fallback(hist_log, key, base, days, err):
     return None
 
 
+def _cut_days(ser, days):
+    """Recorta a série p/ a janela pedida. Exceção: 1D sem intraday mostra
+    os últimos 2 fechamentos diários (nunca 1 ponto mudo no popup)."""
+    days = int(days)
+    need = 2 if days == 1 else days
+    return ser[-need:] if len(ser) > need else ser
+
+
+def _hist_cache_first(hist_log, key, base, days, need=2):
+    """P0-B — cache diário como FONTE (não só fallback): em janela curta
+    (≤7D) o log local do poller é diário VERDADEIRO (1 pt/dia via
+    hist_log_series), enquanto o remoto de cobre/fuel/ureia é mensal/
+    semanal. Se o cache tem `need`+ pontos, retorna IMEDIATO sem rede.
+    Sem nota de offline: é dado saudável, não muleta."""
+    if not hist_log or int(days) > 7:
+        return None
+    for k in (key, base) if base != key else (key,):
+        try:
+            fb = hist_log_series(hist_log, k, int(days))
+        except Exception:
+            continue
+        if len(fb) >= need:
+            return {"points": fb,
+                    "src": f"cache diário local ({len(fb)} pts)",
+                    "note": None}
+    return None
+
+
 def fetch_history(key, days=30, hist_log=None):
     """Histórico p/ os gráficos com fallback perfeito (espelha os preços):
     cada ativo tenta a cadeia remota (Yahoo q1->q2->Stooq, FX awesome->
@@ -2086,9 +2459,55 @@ def fetch_history(key, days=30, hist_log=None):
     note = None
     if bank_name:
         note = f"{bank_name} acompanha o fisico: serie SGE de referencia"
+    # Chave desconhecida (typo/programação) nunca cai no cache: levanta
+    # direto em vez de mascarar com série velha de outra chave.
+    _KNOWN = {"spot_usd", "spot_brl", "usdbrl", "copper", "cu_shfe", "gc_f",
+              "ho_f", "brent", "urals", "sc_f", "murban", "sge_au9999",
+              "sge_autd", "shfe", "base_cn", "fuel_gas", "fuel_diesel",
+              "cds_5y", "br_yield", "us_yield", "urea_me", "urea_br",
+              "sulfur", "crb", "deus_rf"}
+    if base not in _KNOWN:
+        raise ValueError(f"ativo desconhecido: {key}")
+    if base == "br_yield" and key.split(":", 1)[1] not in YIELD_MATS:
+        raise ValueError(f"vencimento desconhecido: {key}")
+    if base == "us_yield" and key.split(":", 1)[1] not in US_YIELD_MATS:
+        raise ValueError(f"vencimento desconhecido: {key}")
+    # P1: 1D = intraday de hoje. 1º log intraday do poller (≥2 pts em 24h,
+    # sem dedupe por dia); depois Yahoo 1d/5m (só futuros com ticker);
+    # senão segue p/ o fluxo diário (que termina no cache com aviso).
+    if int(days) == 1:
+        for _ik in ((key, base) if base != key else (key,)):
+            try:
+                _ip = hist_log_intraday(hist_log, _ik, 24) if hist_log else []
+            except Exception:
+                _ip = []
+            if len(_ip) >= 2:
+                return {"points": _ip,
+                        "src": f"intraday local ({len(_ip)} pts hoje)",
+                        "note": None}
+        _isym = {"copper": "HG=F", "ho_f": "HO=F", "brent": "BZ=F",
+                 "gc_f": "GC=F", "urea_br": "UFB=F"}.get(base)
+        if _isym:
+            try:
+                _ip, _isrc = _hist_yahoo_intraday(_isym)
+                return {"points": _ip, "src": _isrc, "note": None}
+            except Exception as _ie:
+                log(f"hist 1D {key}: intraday remoto falhou ({_ie})")
+    # P0-B: janela curta (≤7D) prefere o cache diário do poller (verdadeiro
+    # diário) ao remoto mensal/semanal. Só cai no remoto se o cache <2 pts.
+    try:
+        _cf = _hist_cache_first(hist_log, key, base, days)
+    except Exception:
+        _cf = None
+    if _cf is not None:
+        return _cf
     try:
         if base == "spot_usd":
             pts, src = _hist_paxg(days)
+        elif base == "usdbrl":
+            # P0-C: mesma cadeia do preço visível (awesomeapi -> frankfurter
+            # -> FRED -> Olinda), só que em série histórica.
+            pts, src = _hist_fx("USD-BRL", days)
         elif base == "spot_brl":
             paxg, s1 = _hist_paxg(days + 10)
             fx, s2 = _hist_fx("USD-BRL", days + 10)
@@ -2096,10 +2515,10 @@ def fetch_history(key, days=30, hist_log=None):
                                 dict(fx))
             if len(joined) < 2:
                 raise ValueError("juncao PAXG x USDBRL vazia")
-            pts = joined[-days:] if len(joined) > days else joined
+            pts = _cut_days(joined, days)
             src = f"PAXG x USDBRL ({s1}; {s2})"
         elif base == "copper":
-            pts, src = _hist_yahoo("HG=F", days)
+            pts, src = _hist_copper(days)
         elif base == "cu_shfe":
             pts, src = _hist_cu(days, hist_log)
         elif base == "gc_f":
@@ -2128,7 +2547,7 @@ def fetch_history(key, days=30, hist_log=None):
                 joined = _hist_join(cny_pts, dict(fx))
                 if len(joined) < 2:
                     raise ValueError("juncao SGE x CNYBRL vazia")
-                pts = joined[-days:] if len(joined) > days else joined
+                pts = _cut_days(joined, days)
                 src = f"{s0} x CNYBRL ({s1})"
             except Exception as e2:
                 pts = cny_pts[-days:] if len(cny_pts) > days else cny_pts
@@ -2151,7 +2570,7 @@ def fetch_history(key, days=30, hist_log=None):
                 joined = _hist_join(cny_pts, dict(fx))
                 if len(joined) < 2:
                     raise ValueError("juncao SHFE x CNYBRL vazia")
-                pts = joined[-days:] if len(joined) > days else joined
+                pts = _cut_days(joined, days)
                 src = f"{s0} x CNYBRL"
             except Exception as e2:
                 pts = cny_pts[-days:] if len(cny_pts) > days else cny_pts
@@ -2170,12 +2589,14 @@ def fetch_history(key, days=30, hist_log=None):
                     out.append((dt, p * (u / c) / TROY_OZ_GRAMS))
             if len(out) < 2:
                 raise ValueError("juncao base CN vazia")
-            pts = out[-days:] if len(out) > days else out
+            pts = _cut_days(out, days)
             src = "PAXG x USDCNY/oz (derivada)"
         elif base == "fuel_gas":
             pts, src = _hist_fred(["GASREGW"], days)
+            src += " (semanal)"
         elif base == "fuel_diesel":
             pts, src = _hist_fred(list(DIESEL_FRED_IDS), days)
+            src += " (semanal)"
         elif base == "cds_5y":
             pts, src = _hist_cds(days)
         elif base == "br_yield":
@@ -2194,6 +2615,8 @@ def fetch_history(key, days=30, hist_log=None):
             pts, src = _hist_sulfur(days, hist_log)
         elif base == "crb":
             pts, src = _hist_crb(days)
+        elif base == "deus_rf":
+            pts, src = _hist_deus(days)
         else:
             raise ValueError(f"ativo desconhecido: {key}")
     except Exception as e:
@@ -2201,6 +2624,10 @@ def fetch_history(key, days=30, hist_log=None):
         if fb is not None:
             return fb
         raise
+    if int(days) == 1 and base in ("spot_brl", "sge_au9999", "sge_autd",
+                                  "shfe", "base_cn"):
+        n2 = "sem intraday: últimos 2 fechamentos diários"
+        note = f"{note} · {n2}" if note else n2
     return {"points": pts, "src": src, "note": note}
 
 
@@ -4238,6 +4665,156 @@ def _hist_crb(days):
     pts = pts[-days:] if len(pts) > days else pts
     return pts, "Investing.com (HistSSR)"
 
+
+def _deus_dirs():
+    """Dirs do DEUS: estado (leitura/escrita) + snapshot do pacote (leitura)."""
+    state_fred = os.path.join(STATE_DIR, "fred")
+    try:
+        base = os.path.dirname(os.path.abspath(__file__))
+    except Exception:
+        base = os.getcwd()
+    pkg_fred = os.path.join(base, "data", "fred")
+    return state_fred, pkg_fred
+
+
+def _deus_ensure_fred():
+    """Garante CSVs FRED em STATE_DIR/fred (snapshot + download semanal).
+
+    1º copia do snapshot do pacote (data/fred/*.csv) se ausente;
+    2º se o arquivo tem >DEUS_FRED_MAX_AGE, tenta rebaixar do FRED com
+    FRED_UA (sem BROWSER_UA, que pendura). Falha de rede mantém cache.
+    Retorna o dir com os CSVs. Levanta se faltar obrigatório."""
+    import shutil
+    state_fred, pkg_fred = _deus_dirs()
+    try:
+        os.makedirs(state_fred, exist_ok=True)
+    except Exception:
+        pass
+    for fname, sid in DEUS_FRED_IDS:
+        dst = os.path.join(state_fred, fname)
+        if not os.path.exists(dst):
+            src = os.path.join(pkg_fred, fname)
+            try:
+                if os.path.exists(src):
+                    shutil.copyfile(src, dst)
+            except Exception as e:
+                log(f"DEUS: snapshot {fname} não copiado ({e})")
+        # rebaixa se velho (opcionais e obrigatórios)
+        try:
+            st = os.stat(dst)
+            velho = (time.time() - st.st_mtime) > DEUS_FRED_MAX_AGE
+        except Exception:
+            velho = True
+        if velho:
+            try:
+                url = FRED_CSV_FMT.format(sid=sid)
+                raw = _http_get(url, {"User-Agent": FRED_UA}, timeout=20)
+                tmp = dst + ".tmp"
+                with open(tmp, "wb") as f:
+                    f.write(raw)
+                os.replace(tmp, dst)
+                log(f"DEUS: FRED {sid} atualizado")
+            except Exception as e:
+                log(f"DEUS: FRED {sid} sem atualizar ({e}); mantendo cache")
+    # obrigatórios precisam existir agora
+    for fname in ("vix.csv", "dgs10.csv", "nco.csv"):
+        if not os.path.exists(os.path.join(state_fred, fname)):
+            raise RuntimeError(f"DEUS sem {fname} (sem snapshot e sem rede)")
+    return state_fred
+
+
+def _deus_compute(fred_dir):
+    """Computa a série RF mensal pura em memória via deus_freeze_rf.
+
+    Retorna (months, idx, n_mkt, n_sloos, n_solv, n_freeze, meta).
+    Nunca escreve CSV/SVG, nunca chama main() (que dá SystemExit)."""
+    if _DEUS_MOD is None:
+        raise RuntimeError("módulo deus_freeze_rf indisponível")
+    M = _DEUS_MOD
+    vix_d = M.load_fred(os.path.join(fred_dir, "vix.csv"), "VIXCLS")
+    vix_m = M.monthly_avg(vix_d)
+    opt_series = {}
+    for fname, col in (("oas.csv", "BAMLH0A0HYM2"),
+                       ("ted.csv", "TEDRATE")):
+        p = os.path.join(fred_dir, fname)
+        try:
+            dd = M.load_fred(p, col)
+            mm = M.monthly_avg(dd)
+            if len(mm) >= 12:
+                opt_series[col] = mm
+        except Exception:
+            continue
+    end_dt = datetime.strptime(sorted(vix_m)[-1][:7], "%Y-%m")
+    start_dt = datetime(2006, 1, 1)
+    sloos_m = M.anchor_series(M.SLOOS_ANCHORS, start_dt, end_dt)
+    nco_d = M.load_fred(os.path.join(fred_dir, "nco.csv"), "CORALACBN")
+    nco_m = M.quarterly_ffill_monthly(nco_d, start_dt, end_dt)
+    bk_m = M.anchor_series(M.BK_ANCHORS_RF, start_dt, end_dt)
+    distress_m = M.anchor_series(M.DISTRESS_ANCHORS_RF, start_dt, end_dt)
+    bvol_m = M.realized_bondvol(M.load_fred(os.path.join(fred_dir, "dgs10.csv"),
+                                            "DGS10"))
+    months = sorted(set(vix_m) & set(sloos_m) & set(nco_m) & set(bk_m)
+                    & set(distress_m) & set(bvol_m))
+    if len(months) < 200:
+        raise RuntimeError(f"DEUS meses insuficientes: {len(months)}")
+    n_vix = M.expanding_norm({k: vix_m[k] for k in months})
+    n_distress = M.expanding_norm({k: distress_m[k] for k in months})
+    n_bvol = M.expanding_norm({k: bvol_m[k] for k in months})
+    n_opts = [n_distress]
+    for col, mm in opt_series.items():
+        common = sorted(set(months) & set(mm))
+        if len(common) >= 12:
+            n_opts.append(M.expanding_norm({k: mm[k] for k in common}))
+    n_mkt = {}
+    for m in months:
+        base = [n_vix[m]] + [nn[m] for nn in n_opts if m in nn]
+        n_mkt[m] = M.W_BVOL * n_bvol[m] + (1.0 - M.W_BVOL) * (sum(base) / len(base))
+    n_sloos = M.expanding_norm({k: sloos_m[k] for k in months})
+    n_nco = M.expanding_norm({k: nco_m[k] for k in months})
+    n_bk = M.expanding_norm({k: bk_m[k] for k in months})
+    n_solv = {m: (n_nco[m] + n_bk[m]) / 2.0 for m in months}
+    n_freeze = {k: M.freeze_level(k, M.FREEZE_PERIODS) * 100.0 for k in months}
+    idx = M.combine(n_mkt, n_sloos, n_solv, n_freeze)
+    meta = {"vix_m": vix_m, "bvol_m": bvol_m, "nco_m": nco_m, "bk_m": bk_m,
+            "distress_m": distress_m, "sloos_m": sloos_m}
+    return months, idx, n_mkt, n_sloos, n_solv, n_freeze, meta
+
+
+def fetch_deus():
+    """DEUS-Freeze RF atual: valor 0-100 + banda + decomposição.
+
+    Cadeia: snapshot -> download semanal FRED -> computa em memória ->
+    cache 45d. Falha isolada das demais seções."""
+    fred_dir = _deus_ensure_fred()
+    months, idx, n_mkt, n_sloos, n_solv, n_freeze, meta = _deus_compute(fred_dir)
+    now = months[-1]
+    v = float(idx[now])
+    banda = _DEUS_MOD.band(v)
+    return {"value": v, "banda": banda, "mes": now,
+            "n_mkt": float(n_mkt[now]), "n_sloos": float(n_sloos[now]),
+            "n_solv": float(n_solv[now]), "n_freeze": float(n_freeze[now]),
+            "vix": float(meta["vix_m"][now]),
+            "nco": float(meta["nco_m"][now]),
+            "src": "FRED VIX/DGS10/NCO + Fed SLOOS + Courts",
+            "ts": time.time()}
+
+
+def _hist_deus(days):
+    """Série mensal do DEUS p/ o gráfico (mensal -> ponto no dia 01).
+
+    days aqui recorta os últimos N pontos mensais (ex: 30 = ~30 meses).
+    Usa snapshot + rede como o preço; sem série cai no log local."""
+    fred_dir = _deus_ensure_fred()
+    months, idx, _a, _b, _c, _d, _m = _deus_compute(fred_dir)
+    pts = [(m + "-01", float(idx[m])) for m in months]
+    pts.sort()
+    days = int(days)
+    need = 2 if days == 1 else days
+    pts = pts[-need:] if len(pts) > need else pts
+    if len(pts) < 2:
+        raise ValueError("DEUS sem série suficiente")
+    return pts, "DEUS-Freeze RF (FRED mensal)"
+
 def fetch_sina_future():
     """Futuro SHFE ouro (nf_AU0, contrato main) direto da Sina.
     Campos nf_: [1]hora [2]abert. [3]máx [4]mín [8]último [10]liquidação ant."""
@@ -5438,7 +6015,8 @@ if tk is not None:
             brow = tk.Frame(self, bg=BG)
             brow.pack(anchor="w", padx=12, pady=(6, 0))
             self._btns = {}
-            lbls = {7: "7D", 30: "1M", 90: "3M", 180: "6M", 365: "1A"}
+            lbls = {1: "1D", 7: "7D", 30: "1M", 90: "3M", 180: "6M",
+                    365: "1A"}
             for d in meta["ranges"]:
                 b = tk.Button(
                     brow, text=lbls.get(d, f"{d}D"),
@@ -5636,6 +6214,13 @@ class GoldWidget:
             self._hist_log = load_hist_log()
         except Exception:
             self._hist_log = {}
+        # P0-C: backfill 1x em thread (não bloqueia o boot; falha isolada).
+        try:
+            threading.Thread(
+                target=lambda: (backfill_hist_log(self._hist_log)),
+                daemon=True).start()
+        except Exception:
+            pass
         self.last = load_cache() or {}
         # REMOVIDO (2026-09-17): limpa resíduos de COMEX/China do cache antigo
         self.last.pop("china", None)
@@ -5856,6 +6441,15 @@ class GoldWidget:
                                   font=("DejaVu Sans", 7))
         self.l_crb_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
+        # ------------- seção CRÉDITO · DEUS-FREEZE RF (v8.5) ---------------
+        self.deus_frame = tk.Frame(self.body, bg=BG)
+        self.deus_frame.pack(anchor="w", padx=12, fill="x")
+        self._deus_sig = None
+        self._deus_refs = []
+        self.l_deus_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 7))
+        self.l_deus_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
         # ----------------------- menu de botão direito ----------------------
         self.menu = tk.Menu(root, tearoff=0)
         self.menu.add_command(label="Atualizar agora", command=self.update_now)
@@ -5896,6 +6490,7 @@ class GoldWidget:
             for _lbl, _hk in (
                     ("Ouro spot USD", "spot_usd"),
                     ("Ouro spot BRL", "spot_brl"),
+                    ("Câmbio USD/BRL", "usdbrl"),
                     ("Cobre (COMEX HG=F)", "copper"),
                     ("Cobre SHFE (China)", "cu_shfe"),
                     ("Gasolina EUA", "fuel_gas"),
@@ -5909,7 +6504,8 @@ class GoldWidget:
                     ("Uréia (spot intl.)", "urea_me"),
                     ("Uréia CFR Brasil", "urea_br"),
                     ("Enxofre (spot CN)", "sulfur"),
-                    ("CRB Excess Return", "crb")):
+                    ("CRB Excess Return", "crb"),
+                    ("DEUS-Freeze RF", "deus_rf")):
                 gmenu.add_command(label=_lbl,
                                   command=lambda k=_hk: self.open_history(k))
             gmenu.add_command(
@@ -5948,7 +6544,7 @@ class GoldWidget:
                          (self.l_brl_var_week, "spot_brl"),
                           (self.l_sub, None),
                           (self.l_fx_title, None),
-                          (self.l_usdbrl, None),
+                           (self.l_usdbrl, "usdbrl"),
                           (self.l_copper_sub, None),
                          (self.l_us_sub, None), (self.l_cds_sub, None),
                           (self.l_yield_sub, None),
@@ -5957,7 +6553,8 @@ class GoldWidget:
                          (self.l_sc_sub, None),
                          (self.l_murban_sub, None),
                          (self.l_urals_sub, None), (self.l_urea_sub, None),
-                         (self.l_sulfur_sub, None), (self.l_crb_sub, None)):
+                         (self.l_sulfur_sub, None), (self.l_crb_sub, None),
+                         (self.l_deus_sub, None)):
             self._bind(w, hk)
 
         # ------------- v7.1: rolagem oculta (wheel, sem scrollbar) ----------
@@ -6154,7 +6751,7 @@ class GoldWidget:
             return {"title": f"{key.split(':', 1)[1]} (R$/g) · ref. SGE",
                     "fmt": lambda v: f"R$ {fmt_brl(v)}/g",
                     "yfmt": lambda v: fmt_brl(v).split(",")[0],
-                    "ranges": (7, 30, 90, 180, 365)}
+                    "ranges": (1, 7, 30, 90, 180, 365)}
         if key.startswith("br_yield:"):
             mat = key.split(":", 1)[1]
             meta = YIELD_MATS.get(mat) or {}
@@ -6162,7 +6759,7 @@ class GoldWidget:
             return {"title": f"Brasil · Yield nominal {lbl} (% a.a.)",
                     "fmt": lambda v: f"{fmt_yield(v)}%",
                     "yfmt": lambda v: f"{v:.2f}".replace(".", ","),
-                    "ranges": (7, 30, 90, 180, 365)}
+                    "ranges": (1, 7, 30, 90, 180, 365)}
         if key.startswith("us_yield:"):
             mat = key.split(":", 1)[1]
             meta = US_YIELD_MATS.get(mat) or {}
@@ -6170,18 +6767,19 @@ class GoldWidget:
             return {"title": f"EUA · Yield nominal {lbl} (% a.a.)",
                     "fmt": lambda v: f"{fmt_yield(v)}%",
                     "yfmt": lambda v: f"{v:.2f}".replace(".", ","),
-                    "ranges": (7, 30, 90, 180, 365)}
+                    "ranges": (1, 7, 30, 90, 180, 365)}
         m = HIST_META.get(key)
         if m:
             return m
         return {"title": key, "fmt": lambda v: f"{v}",
-                "yfmt": lambda v: f"{v}", "ranges": (7, 30)}
+                "yfmt": lambda v: f"{v}", "ranges": (1, 7, 30)}
 
     def fetch_history_cached(self, key, days):
         now = time.time()
         ck = (key, int(days))
+        ttl = HIST_CACHE_TTL_INTRADAY if int(days) == 1 else HIST_CACHE_TTL
         hit = self._hist_cache.get(ck)
-        if hit and now - hit[0] < HIST_CACHE_TTL:
+        if hit and now - hit[0] < ttl:
             return hit[1]
         res = fetch_history(key, int(days), self._hist_log)
         self._hist_cache[ck] = (now, res)
@@ -6716,6 +7314,22 @@ class GoldWidget:
             self.last.pop("crb", None)
             log("CRB: cache >7 dias sem fonte; removido")
 
+        # ---- CRÉDITO · DEUS-FREEZE RF v3.2 (v8.5): mensal, refetch 6h;
+        #      snapshot data/fred + download semanal FRED -> computa em
+        #      memória -> cache 45d; falha isolada das demais seções ----
+        dx = self.last.get("deus_rf")
+        if _due("deus_rf", dx, DEUS_REFETCH):
+            try:
+                self.last["deus_rf"] = fetch_deus()
+                _cooldown_clear("deus_rf")
+            except Exception as e:
+                log(f"DEUS indisponível ({e}); mantendo cache")
+                _cooldown("deus_rf", DEUS_REFETCH, str(e))
+        dx = self.last.get("deus_rf")
+        if dx and time.time() - dx.get("ts", 0) > DEUS_MAX_AGE:
+            self.last.pop("deus_rf", None)
+            log("DEUS: cache >45 dias sem fonte; removido")
+
         # ---- Câmbio · USD/BRL (v8.2): refetch 90s; cadeia 10 degraus
         #      (intraday -> BCB); falha da cadeia mantém cache ≤24h ----
         ub = self.last.get("usdbrl")
@@ -6848,6 +7462,12 @@ class GoldWidget:
             _cb = _L.get("crb") or {}
             if _cb.get("price"):
                 log_hist_point(_H, "crb", _cb["price"])
+            _dx = _L.get("deus_rf") or {}
+            if _dx.get("value") is not None:
+                log_hist_point(_H, "deus_rf", _dx["value"])
+            _ub0 = _L.get("usdbrl") or {}
+            if _ub0.get("rate"):
+                log_hist_point(_H, "usdbrl", _ub0["rate"])
             save_hist_log(_H)
         except Exception as e:
             log(f"falha no log de historico: {e}")
@@ -6974,6 +7594,10 @@ class GoldWidget:
         # seção ÍNDICES · CRB Excess Return (v8.5)
         self._render_crb()
         self._render_crb_sub()
+
+        # seção CRÉDITO · DEUS-FREEZE RF (v8.5)
+        self._render_deus()
+        self._render_deus_sub()
 
         # re-encosta no canto com a largura real (a menos que o user arrastou)
         if not self._user_moved:
@@ -8261,6 +8885,79 @@ class GoldWidget:
             parts.append(" · ".join(p))
         self.l_crb_sub.config(text="  ·  ".join(parts), fg=TXT_DIM)
 
+    # ---------------- exibição · seção CRÉDITO · DEUS (v8.5) ------------------
+    def _deus_rows(self):
+        d = self.last.get("deus_rf") or {}
+        rows = []
+        if d.get("value") is not None:
+            rows.append((("h", "── CRÉDITO · DEUS-FREEZE RF ──"), None, None))
+            nome = f"DEUS {d.get('mes', '')} · {d.get('banda', '')}"
+            if d.get("ts") and time.time() - d["ts"] > DEUS_REFETCH * 2:
+                nome += " · (cache)"
+            rows.append((("r", nome), f"{d['value']:.0f}", None))
+        return rows
+
+    def _render_deus(self):
+        rows = self._deus_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._deus_sig:
+            for w in self.deus_frame.winfo_children():
+                w.destroy()
+            self._deus_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.deus_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._deus_refs.append(("h", lab))
+                else:
+                    ln = tk.Label(self.deus_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.deus_frame, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.deus_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, "deus_rf")
+                    self._deus_refs.append(("r", ln, lp, lv))
+                grid += 1
+            self.deus_frame.columnconfigure(0, weight=1)
+            self._deus_sig = sig
+        for ref, r in zip(self._deus_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            lp.config(text=r[1], fg=TXT_USD)
+            lv.config(text="")
+
+    def _render_deus_sub(self):
+        d = self.last.get("deus_rf") or {}
+        parts = []
+        if d.get("value") is not None:
+            p = [f"{d.get('src', '?')}"]
+            if d.get("mes"):
+                p.append(str(d["mes"]))
+            if d.get("ts"):
+                p.append(f"há {max(0, int(time.time() - d['ts']))}s")
+            decomp = []
+            for k, lbl in (("n_mkt", "mkt"), ("n_sloos", "sloos"),
+                           ("n_solv", "solv"), ("n_freeze", "frz")):
+                if d.get(k) is not None:
+                    decomp.append(f"{lbl} {d[k]:.0f}")
+            if decomp:
+                p.append(" · ".join(decomp))
+            parts.append(" · ".join(p))
+        self.l_deus_sub.config(text="  ·  ".join(parts), fg=TXT_DIM)
+
     def _tick(self):
         if self.stop.is_set():
             return
@@ -8277,6 +8974,7 @@ class GoldWidget:
         self._render_urea_sub()     # reavalia idade/cache da ureia
         self._render_sulfur_sub()   # reavalia idade/cache do enxofre
         self._render_crb_sub()      # reavalia idade/cache do CRB
+        self._render_deus_sub()     # reavalia idade/cache do DEUS
         self._pump_tray_loop()      # v8.3.1: mantém o registro SNI vivo
         self.root.after(5000, self._tick)
 
@@ -8738,6 +9436,15 @@ def dump():
               f"({', '.join(extra) if extra else '—'})")
     except Exception as e:
         print(f"CRB EXCESS RETURN: FALHOU ({e})")
+
+    try:
+        dx = fetch_deus()
+        last["deus_rf"] = dx
+        print(f"DEUS-FREEZE RF [{dx['src']}]: {dx['value']:.1f} {dx['banda']} "
+              f"({dx['mes']} · mkt {dx['n_mkt']:.0f} · sloos {dx['n_sloos']:.0f} · "
+              f"solv {dx['n_solv']:.0f} · frz {dx['n_freeze']:.0f})")
+    except Exception as e:
+        print(f"DEUS-FREEZE RF: FALHOU ({e})")
 
     print("\nCHINA/COMEX: removidos a pedido do usuário")
     return 0

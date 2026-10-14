@@ -1,3 +1,24 @@
+gold-widget (8.5-1) unstable; urgency=medium
+
+  * Seção CRÉDITO · DEUS-FREEZE RF v3.2: termômetro mensal 0-100
+    (25% mkt + 15% SLOOS + 25% solv + 35% freeze, rating-free),
+    módulo próprio deus_freeze_rf.py + snapshot data/fred/*.csv +
+    download semanal FRED com fallback offline, valor + banda +
+    gráfico no clique, --dump e history.json; testes cobrem deus_rf;
+    README v8.5.
+
+ -- adrianodev1995 <adriano@a00s.com>  Wed, 14 Oct 2026 19:05:00 -0300
+
+gold-widget (8.4.2-1) unstable; urgency=medium
+
+  * Fallbacks dos graficos: hist_log_series tolerante a linha suja
+    (1 linha corrompida nao mata mais o cache, ultimo recurso),
+    proxy mensal do HG=F anotado com "(mensal)" no rodape,
+    chave desconhecida levanta antes do cache (sem mascarar typo),
+    _hist_join defensivo por ponto.
+
+ -- adrianodev1995 <adriano@a00s.com>  Wed, 30 Sep 2026 11:18:27 -0300
+
 gold-widget (8.4.1-1) unstable; urgency=medium
 
   * Sincroniza payload com o upstream v8.4.1: yields BR/UST + bandeja

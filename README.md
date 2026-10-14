@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.x-3776AB?logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/plataforma-Linux%20%C2%B7%20X11-FCC624?logo=linux&logoColor=black)
 ![Dependências](https://img.shields.io/badge/depend%C3%AAncias-somente%20stdlib-00A86B)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-v8.2-c9a227)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-v8.5-c9a227)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20pessoal-lightgrey)
 
 Widget de desktop em **Python puro** (tkinter) que vive na sua área de trabalho e mostra, em tempo quase real e **sem nenhuma chave de API**:
@@ -18,6 +18,7 @@ Widget de desktop em **Python puro** (tkinter) que vive na sua área de trabalho
 - **Petróleo e derivados** — NYMEX diesel `HO=F`, Brent `BZ=F`, Crude SC de Xangai, Murban (Emirados) e Urals (Rússia);
 - **Fertilizante e commodity química** — uréia (spot internacional + CFR Brasil) e enxofre spot da China.
 - **Índices · CRB** — TR/CC CRB Excess Return em pontos + var. do dia (cadeia pura Investing, sem misturar base).
+- **Crédito · DEUS-Freeze RF** — termômetro mensal 0-100 de estresse em crédito (25% mkt + 15% SLOOS + 25% solv + 35% freeze; bandas CALMO/ATENÇÃO/TRAVA/QUEBRA), rating-free, com gráfico no clique.
 
 > Sem chaves de API, sem pip, sem dependências externas.
 > Só a stdlib: `tkinter` + `urllib` (+ `ctypes` para o truque de camada no X11).
@@ -155,6 +156,7 @@ Toda fonte tem plano B (e C, D...). Se uma responde erro **ou responde sem dado*
 | **Uréia CFR Brasil** (US$/t) | Yahoo `UFB=F` (CBOT/CME "Urea Granular CFR Brazil", q1→q2) → TradingView `CBOT:UFB1!` → cache 14d | 1 h | 14 dias |
 | **Enxofre spot CN** (CNY/t → US$/t) | TradingEconomics `/commodity/sulfur` → SunSirs (tabela diária; anti-bot `HW_CHECK` replicado em 2 GETs) → cache 14d; US$/t só com USDCNY fresco | 1 h | 14 dias |
 | **TR/CC CRB Excess Return** (pts) | Investing SSR `thomson-reuters---jefferies-crb` (www → m., bloco `indexStore`, `lastClose` corrompido: prev = last − change) → Investing API historical (pair `39972`, linha de hoje) → Investing SSR `historical-data` → cache 7d. Yahoo sem símbolo (404), TE/Bloomberg outra base (539/535) e DBC é ETF (US$ 32): fora da cadeia por decisão | 15 min | 7 dias |
+| **Crédito · DEUS-Freeze RF** (0-100) | Snapshot `data/fred/*.csv` (vix/dgs10/nco/oas/ted) → download semanal FRED com `FRED_UA` → computa em memória via `deus_freeze_rf.py` (`expanding_norm` causal, sem look-ahead) → cache 45d. Sem rede usa snapshot. Trava anti-agência: `DBAA/DAAA`/Fitch/Moody's nunca entram | 6 h | 45 dias |
 
 Notas de robustez:
 
@@ -288,6 +290,7 @@ UREIA SPOT [TradingEconomics]: 459.00 US$/t (-0.22%)
 UREIA CFR BRASIL [TradingView]: 475.00 US$/t (—)
 ENXOFRE SPOT CN [TradingEconomics]: 1,145.55 US$/t (+0.00%, cru CNY 7,752.33, USDCNY 6.7674)
 CRB EXCESS RETURN [Investing.com]: 418.54 pts (-1.13%, Δ -4.79, dado 2026-09-25)
+DEUS-FREEZE RF [FRED VIX/DGS10/NCO + Fed SLOOS + Courts]: 44.9 ATENÇÃO (2026-10 · mkt 45 · sloos 16 · solv 27 · frz 70)
 ```
 
 *(valores de uma execução real; mudam a cada chamada)*
@@ -299,6 +302,7 @@ CRB EXCESS RETURN [Investing.com]: 418.54 pts (-1.13%, Δ -4.79, dado 2026-09-25
 | `~/.local/share/gold-widget/last_price.json` | cache do último estado conhecido (**escrita atômica**; inclui o tamanho da janela da v7.1) |
 | `~/.local/share/gold-widget/widget.log` | log de eventos, falhas de fonte e fallbacks acionados |
 | `~/.local/share/gold-widget/history.json` | histórico extraído dos logs, usado como fallback dos gráficos |
+| `~/.local/share/gold-widget/fred/*.csv` | CSVs FRED do DEUS (vix/dgs10/nco/oas/ted); snapshot do pacote + download semanal |
 
 No boot o widget renderiza imediatamente o cache enquanto busca dados novos; se tudo estiver offline, mostra o rodapé `spot offline (cache)`.
 
@@ -329,6 +333,8 @@ Constantes no topo do `gold_widget.py`:
 | `UREA_REFETCH` / `UREA_MAX_AGE` | `1 h` / `14 dias` | cadência e expiração das duas linhas de uréia |
 | `SULFUR_REFETCH` / `SULFUR_MAX_AGE` | `1 h` / `14 dias` | cadência e expiração do enxofre |
 | `CRB_REFETCH` / `CRB_MAX_AGE` | `15 min` / `7 dias` | cadência e expiração do TR/CC CRB Excess Return |
+| `DEUS_REFETCH` / `DEUS_MAX_AGE` | `6 h` / `45 dias` | cadência e expiração do DEUS-Freeze RF (mensal; cobre virada de mês + FRED atrasado) |
+| `DEUS_FRED_MAX_AGE` | `7 dias` | idade a partir da qual os CSVs FRED são rebaixados |
 | `MIN_W` / `MIN_H` / `EDGE_PX` | `200` / `150` / `6` | tamanho mínimo da janela e espessura da alça de resize (v7.1) |
 | `MARGIN` / `MARGIN_Y` | `16` / `40` | distância da borda ao encostar no canto |
 
@@ -370,6 +376,7 @@ A solução: o widget cria-se como tipo `desktop` e depois envia ao WM um *clien
 | **v8.0** | **Seção BRASIL · YIELD GOVERNO (NOMINAL)** logo abaixo do CDS: curva LTN/NTN (% a.a., 14,17% 10y) com **dropdown ▾ de vencimento** persistente, Δ do dia em **pontos percentuais**, curva inteira no rodapé; cadeia Investing (tabela www/m.) → TE (10y) → instrumento → API historical → cache 4d; gráfico 7D–1A no clique |
 | **v8.1** | **Seção EUA · YIELD GOVERNO (TREASURY)** logo abaixo do yield BR: curva UST nominal 1m–30a (bills/notes/bonds misturados, tipo no nome) com dropdown persistente, Δ em pp, curva inteira no rodapé; cadeia Investing (tabela `usa-government-bonds` www/m.) → TE (3m/6m/10a/20a/30a) → instrumento → API historical → **FRED DGS\*** (completa a curva) → cache 4d; gráfico 7D–1A no clique; fix do TE BR (chave `10y`→`10a`); fix do FRED (UA — conserta o fallback de combustível) |
 | **v8.2** | **Seção CÂMBIO · USD/BRL** logo abaixo do OURO · SPOT: só o valor (mid 4 casas pt-BR, `US$ 1 = R$ 5,1526`), `fetch_usdbrl()` separado do `fetch_fx` (derivações intactas); cadeia de **10 degraus** com queda automática em cascata (falha → próximo; próximo falhou → outro): awesomeapi → Yahoo `USDBRL=X` → TradingEconomics → floatrates → currency-api (**pages.dev** 1º — o jsDelivr `@latest` serve cotação velha) → open.er-api → frankfurter.dev → BCB SGS → Olinda PTAX → BCB SOAP; mid = (compra+venda)/2 ou (bid+ask)/2; cooldown por fonte; cache 24h; também no `--dump` |
+| **v8.5** | **Seção CRÉDITO · DEUS-FREEZE RF**: termômetro mensal 0-100 (`25% mkt + 15% SLOOS + 25% solv + 35% freeze`, bandas `CALMO/ATENÇÃO/TRAVA/QUEBRA`), rating-free (VIX+BONDVOL+DISTRESS+OAS/TED, NCO FDIC + falências Courts, sem Fitch/Moody's), módulo próprio `deus_freeze_rf.py` + snapshot `data/fred/*.csv` + download semanal FRED com fallback offline; valor + banda + decomposição na UI, gráfico mensal no clique, `--dump` e `history.json`; testes cobrem `deus_rf` |
 
 ## Licença
 
