@@ -924,15 +924,20 @@ MURBAN_BLEND_ID = "4464"
 MURBAN_REFETCH  = 3600                # avaliação com delay: refetch 1/h
 MURBAN_MAX_AGE  = 7 * 86400           # cache vence (7 dias; padrão Urals)
 
-# ------------------- CONFIG · BRENT (benchmark global, v6.3) -----------------
+# ------------------- CONFIG · BRENT (benchmark global, v6.3, fix 23-Oct-2026) -----------------
 # Brent = benchmark do petroleo (mar do Norte). Nao é spot em bolsa
-# comum: o intraday é o front-month do futuro (BZ=F/ICE), e o "spot" de
-# referência vem de avaliacoes (OilPrice.com, ~11 min de atraso).
-# Cadeia (Yahoo -> FXEmpire -> OilPrice tabela -> OilPrice JSON -> cache):
-#   - Yahoo: chart API do continuo BZ=F, igual GC=F/HO=F.
+# comum: o intraday é o front-month ICE Dez/26 (LCOZ6, expira 30-Out-2026),
+# e o "spot" de referência vem de avaliacoes (OilPrice.com, ~11 min de atraso).
+# RACIONAL DO FIX (111 vs 114 em 23-Oct-2026): Yahoo BZ=F é CME/NYMEX
+# "Last Day Financial" (volume ~91, ~US$ 4-5 abaixo do ICE) e nao o ICE;
+# em dia de spike +4% (Houthis/Hormuz, range 110.95-115.55) o cache de 5min
+# serviu last velho 111.45 colado na minima enquanto sites mostravam ICE/CFD
+# 114-115. Por isso a cadeia agora é CFD-primeiro (realtime Oanda).
+# Cadeia (FXEmpire -> Yahoo -> OilPrice tabela -> OilPrice JSON -> cache):
 #   - FXEmpire: /commodities/brent-crude-oil — blob do react-query com o
 #     quote do CFD BCO/USD (Oanda, realtime); marker "vendorSymbol":
 #     "BCO/USD" (unico na pagina; blob rates, diferente do do HO).
+#   - Yahoo: chart API do continuo BZ=F, igual GC=F/HO=F (fallback diario).
 #   - OilPrice.com tabela: linha data-name='Brent-Crude' (data-id 46).
 #   - OilPrice.com freewidgets: POST JSON do proprio grafico do blend
 #     (CSRF de /ajax/csrf; header X-Requested-With obrigatorio).
@@ -940,6 +945,7 @@ YAHOO_BZ_URL  = ("https://query1.finance.yahoo.com/v8/finance/chart/BZ=F"
                  "?interval=1d&range=5d")   # 5 barras: atual + anteriores
 FXE_BRENT_URL = "https://www.fxempire.com/commodities/brent-crude-oil"
 BRENT_BLEND_ID = "46"
+BRENT_FRONT_MONTH = "dez/26"         # ICE LCOZ6, expira 30-Out-2026; CFD replica o front
 BRENT_REFETCH  = 5 * 60               # intraday: refetch no máx. 1/5min
 BRENT_MAX_AGE  = 4 * 86400            # cache vence (4 dias; cobre fim de semana)
 
@@ -3945,13 +3951,15 @@ def fetch_brent_yahoo_q2():
     return _fetch_yahoo_future("BZ=F", YAHOO_BZ_URL_Q2)
 
 def fetch_brent():
-    """Brent (benchmark global), US$/barril. Cadeia (v6.4): Yahoo-q1 ->
-    Yahoo-q2 -> FXEmpire -> OilPrice tabela -> OilPrice freewidgets ->
-    cache. Todas sem chave; cada fonte tem cooldown próprio."""
+    """Brent (benchmark global), US$/barril. Cadeia (fix 23-Oct-2026):
+    FXEmpire-CFD (ICE front Dez/26 realtime) -> Yahoo-q1 -> Yahoo-q2 ->
+    OilPrice tabela -> OilPrice freewidgets -> cache. Yahoo BZ=F é CME
+    Last-Day Financial ilíquido (~US$ 4-5 abaixo do ICE) e virou fallback.
+    Todas sem chave; cada fonte tem cooldown próprio."""
     cands = (
+        ("FXEmpire-BZ", fetch_brent_fxempire, BRENT_REFETCH),
         ("Yahoo-BZ-q1", fetch_brent_yahoo, BRENT_REFETCH),
         ("Yahoo-BZ-q2", fetch_brent_yahoo_q2, BRENT_REFETCH),
-        ("FXEmpire-BZ", fetch_brent_fxempire, BRENT_REFETCH),
         ("OilPrice-tab", fetch_brent_oilprice, BRENT_REFETCH),
         ("OilPrice-json", fetch_brent_json, BRENT_REFETCH),
     )
@@ -8305,14 +8313,21 @@ class GoldWidget:
 
     # ------------- exibição · seção BRENT · CRUDE (v6.3) --------------------
     def _brent_label(self, rec=None):
-        """Rótulo da linha: 'BZ=F · nov/26' (+ ' · (cache)' após
+        """Rótulo da linha: 'BZ=F · dez/26 (CFD)' (+ ' · (cache)' após
         FUT_STALE). Mês vem do shortName do Yahoo (ex.: 'Brent Crude Oil
-        Nov 26'); CFD da FXEmpire não traz mês -> fica só 'BZ=F'."""
+        Nov 26'); CFD da FXEmpire não traz mês -> usa BRENT_FRONT_MONTH
+        (ICE LCOZ6 front). Fix 23-Oct-2026: explicita CFD vs CME."""
         rec = rec or {}
         nome = "BZ=F"
-        parts = (rec.get("name") or "").split()
-        if len(parts) >= 3 and parts[-2] in MONTH_PT:
-            nome += f" · {MONTH_PT[parts[-2]]}/{parts[-1]}"
+        src = rec.get("src") or ""
+        if "FXEmpire" in src or "CFD" in (rec.get("name") or ""):
+            nome += f" · {BRENT_FRONT_MONTH} (CFD)"
+        else:
+            parts = (rec.get("name") or "").split()
+            if len(parts) >= 3 and parts[-2] in MONTH_PT:
+                nome += f" · {MONTH_PT[parts[-2]]}/{parts[-1]}"
+            elif BRENT_FRONT_MONTH:
+                nome += f" · {BRENT_FRONT_MONTH}"
         if rec.get("ts") and time.time() - rec["ts"] > FUT_STALE:
             nome += " · (cache)"
         return nome
