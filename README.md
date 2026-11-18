@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.x-3776AB?logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/plataforma-Linux%20%C2%B7%20X11-FCC624?logo=linux&logoColor=black)
 ![Dependências](https://img.shields.io/badge/depend%C3%AAncias-somente%20stdlib-00A86B)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-v8.5-c9a227)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-v8.6-c9a227)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20pessoal-lightgrey)
 
 Widget de desktop em **Python puro** (tkinter) que vive na sua área de trabalho e mostra, em tempo quase real e **sem nenhuma chave de API**:
@@ -13,6 +13,7 @@ Widget de desktop em **Python puro** (tkinter) que vive na sua área de trabalho
 - **Cobre** — COMEX `HG=F` (benchmark global) e SHFE `CU0` (China), ambos em US$/lb para comparar o prêmio chinês de graça;
 - **Combustível EUA** — média nacional **diária** de varejo da bomba (gasolina regular e diesel, AAA);
 - **Risco soberano do Brasil** — CDS 5 anos em bps + probabilidade de default implícita;
+- **CDS NVIDIA 5A (indicativo)** — CNBC `NVDACD5` (last + 5d/1m/3m + máx/mín 5A; contrato só desde nov/25, sem série 5-10 anos em fonte grátis);
 - **Yield do governo do Brasil** — curva **nominal** (LTN/NTN, % a.a.) com **dropdown ▾ para escolher o vencimento** (3m/6m/9m/1a/2a/3a/5a/8a/10a) e Δ do dia em pontos percentuais;
 - **Yield do Tesouro dos EUA** — curva **nominal** UST (bills/notes/bonds, % a.a.) com **dropdown ▾** (1m/3m/6m/1a/2a/3a/5a/7a/10a/20a/30a), o tipo (bill/note/bond) no nome do vencimento e Δ em pontos percentuais;
 - **Petróleo e derivados** — NYMEX diesel `HO=F`, Brent `BZ=F`, Crude SC de Xangai, Murban (Emirados) e Urals (Rússia);
@@ -145,6 +146,7 @@ Toda fonte tem plano B (e C, D...). Se uma responde erro **ou responde sem dado*
 | **Cobre SHFE CU0** (US$/lb) | Sina `nf_CU0` (contrato principal real) → Eastmoney futsseapi `113_cum_qt` (主连 emendado) → Eastmoney push2delay `113.cum` → cache 4d | 5 min | 4 dias |
 | **Combustível EUA (varejo · diário)** | AAA Fuel Prices `gasprices.aaa.com` (tabela nacional, vs ontem) → cache 14d | 1 h | 14 dias |
 | **CDS Brasil 5 anos (bps)** | WGB (REST interno; payload embutido → payload reextraído da página) → Investing.com SSR `BRGV5YUSAC=R` (EOD, checa `lastUpdateTime`) → cache 7d | 15 min | 7 dias |
+| **CDS NVIDIA 5A (bps, indicativo)** | CNBC `NVDACD5` (last + previous_day_closing + returnsData 5D/1M/3M + ranges FIVE_YEAR; contrato só desde nov/25) → cache 7d | 15 min | 7 dias |
 | **Yield Brasil nominal (LTN/NTN, % a.a.)** | Investing tabela SSR (`/rates-bonds/brazil-government-bonds`; curva inteira intraday, host www → host m.) → TradingEconomics (só o 10y; pulado p/ outros vencimentos) → Investing página do instrumento (SSR `__NEXT_DATA__`, EOD) → Investing API historical (linha de hoje) → cache 4d | 15 min | 4 dias |
 | **Yield EUA Treasury (UST, % a.a.)** | Investing tabela SSR (`/rates-bonds/usa-government-bonds`; curva inteira intraday, host www → host m.) → TradingEconomics (só 3m/6m/10a/20a/30a; os demais slugs são 404) → Investing página do instrumento (SSR, EOD) → Investing API historical (linha de hoje) → **FRED `DGS1MO`…`DGS30`** (CMT oficial, EOD; completa a curva sem sobrescrever) → cache 4d | 15 min | 4 dias |
 | **NYMEX diesel HO=F** (US$/gal e /bbl) | Yahoo `HO=F` (q1→q2) → FXEmpire `/commodities/ho` (CFD Oanda) → TradingEconomics (scrape) → cache 4d | 5 min | 4 dias |
@@ -377,6 +379,7 @@ A solução: o widget cria-se como tipo `desktop` e depois envia ao WM um *clien
 | **v8.1** | **Seção EUA · YIELD GOVERNO (TREASURY)** logo abaixo do yield BR: curva UST nominal 1m–30a (bills/notes/bonds misturados, tipo no nome) com dropdown persistente, Δ em pp, curva inteira no rodapé; cadeia Investing (tabela `usa-government-bonds` www/m.) → TE (3m/6m/10a/20a/30a) → instrumento → API historical → **FRED DGS\*** (completa a curva) → cache 4d; gráfico 7D–1A no clique; fix do TE BR (chave `10y`→`10a`); fix do FRED (UA — conserta o fallback de combustível) |
 | **v8.2** | **Seção CÂMBIO · USD/BRL** logo abaixo do OURO · SPOT: só o valor (mid 4 casas pt-BR, `US$ 1 = R$ 5,1526`), `fetch_usdbrl()` separado do `fetch_fx` (derivações intactas); cadeia de **10 degraus** com queda automática em cascata (falha → próximo; próximo falhou → outro): awesomeapi → Yahoo `USDBRL=X` → TradingEconomics → floatrates → currency-api (**pages.dev** 1º — o jsDelivr `@latest` serve cotação velha) → open.er-api → frankfurter.dev → BCB SGS → Olinda PTAX → BCB SOAP; mid = (compra+venda)/2 ou (bid+ask)/2; cooldown por fonte; cache 24h; também no `--dump` |
 | **v8.5** | **Seção CRÉDITO · DEUS-FREEZE RF**: termômetro mensal 0-100 (`25% mkt + 15% SLOOS + 25% solv + 35% freeze`, bandas `CALMO/ATENÇÃO/TRAVA/QUEBRA`), rating-free (VIX+BONDVOL+DISTRESS+OAS/TED, NCO FDIC + falências Courts, sem Fitch/Moody's), módulo próprio `deus_freeze_rf.py` + snapshot `data/fred/*.csv` + download semanal FRED com fallback offline; valor + banda + decomposição na UI, gráfico mensal no clique, `--dump` e `history.json`; testes cobrem `deus_rf` |
+| **v8.6** | **Seção EUA · CDS NVIDIA 5A (indicativo)**: CNBC `NVDACD5` sem chave (last + 5d/1m/3m + máx/mín 5A), gráfico no clique via log local, `--dump`; contrato só existe desde nov/25 (Investing 404, ICE/S&P paywall), sem série 5-10 anos em fonte grátis |
 
 ## Licença
 

@@ -724,6 +724,14 @@ CDS_MAX_AGE      = 7 * 86400            # cache vence (7 dias sem fonte)
 INV_CDS_URL      = "https://www.investing.com/rates-bonds/brazil-cds-5-years-usd"
 CDS_INV_MAX_AGE  = 4 * 86400            # EOD (~1 dia) + folga p/ fds (sex->seg ~3d)
 
+# ------------- CONFIG · CDS NVIDIA 5A (indicativo, CNBC) ----------------
+# NVDA 5Y CDS só existe desde mid-Nov/2025 (contrato novo: ICE/S&P).
+# Investing 404, WGB só soberano. CNBC tem quote fetchável sem chave:
+# https://www.cnbc.com/quotes/NVDACD5 (last + returnsData 5D/1M/3M).
+CNBC_NVDA_CDS_URL = "https://www.cnbc.com/quotes/NVDACD5"
+NVDA_CDS_POLL_SECONDS = 15 * 60
+NVDA_CDS_MAX_AGE = 7 * 86400
+
 # ------------- CONFIG · YIELD BRASIL NOMINAL (LTN/NTN, v8.0) -----------------
 # Curva nominal do governo brasileiro (LTN/NTN, % a.a. — a que aparece no
 # noticiário: 10y ~14%). Diferente da NTN-B real (WGB, 10y ~7,38%): bases
@@ -1772,6 +1780,15 @@ def _hist_cds(days):
     return pts[-days:] if len(pts) > days else pts, "Investing.com"
 
 
+def _hist_nvda(days):
+    """NVDA 5Y CDS: sem série diária gratuita (CNBC só dá snapshot +
+    returnsData 5D/1M/3M; contrato existe só desde nov/25; Investing 404).
+    Levanta para o fetch_history cair no log local (pontos do poller)."""
+    raise ValueError("NVDA sem série remota gratuita "
+                     "(CNBC só snapshot; contrato desde nov/25) — "
+                     "usando log local")
+
+
 def _hist_yield_api(mat, days):
     """Série diária do yield nominal do vencimento `mat` via API historical
     do Investing (a MESMA do CDS v7.1; cabeçalho 'domain-id' obrigatório;
@@ -2368,6 +2385,10 @@ HIST_META = {
                    "fmt": lambda v: f"{fmt_bps(v)} bps",
                    "yfmt": lambda v: f"{v:.0f}",
                    "ranges": (7, 30, 90, 180, 365)},
+    "nvda_5y":    {"title": "NVDA · CDS 5 anos (bps)",
+                   "fmt": lambda v: f"{fmt_bps(v)} bps",
+                   "yfmt": lambda v: f"{v:.0f}",
+                   "ranges": (7, 30, 90, 180, 365)},
     "urea_me":    {"title": "Uréia · Spot intl. (US$/t)",
                    "fmt": lambda v: f"US$ {fmt_usd(v)}/t",
                    "yfmt": lambda v: f"{v:,.0f}",
@@ -2470,7 +2491,7 @@ def fetch_history(key, days=30, hist_log=None):
     _KNOWN = {"spot_usd", "spot_brl", "usdbrl", "copper", "cu_shfe", "gc_f",
               "ho_f", "brent", "urals", "sc_f", "murban", "sge_au9999",
               "sge_autd", "shfe", "base_cn", "fuel_gas", "fuel_diesel",
-              "cds_5y", "br_yield", "us_yield", "urea_me", "urea_br",
+              "cds_5y", "nvda_5y", "br_yield", "us_yield", "urea_me", "urea_br",
               "sulfur", "crb", "deus_rf"}
     if base not in _KNOWN:
         raise ValueError(f"ativo desconhecido: {key}")
@@ -2605,6 +2626,8 @@ def fetch_history(key, days=30, hist_log=None):
             src += " (semanal)"
         elif base == "cds_5y":
             pts, src = _hist_cds(days)
+        elif base == "nvda_5y":
+            pts, src = _hist_nvda(days)
         elif base == "br_yield":
             pts, src = _hist_yield(key.split(":", 1)[1], days)
         elif base == "us_yield":
@@ -2950,9 +2973,17 @@ def fetch_fx():
     raise RuntimeError("FX sem fonte viva (" + "; ".join(errs) + ")")
 
 def _fx_fresh(fx):
-    """Câmbio utilizável p/ derivação: presente e com até FX_MAX_AGE."""
-    return bool(fx and fx.get("usdbrl")
-                and time.time() - fx.get("ts", 0) <= FX_MAX_AGE)
+    """Câmbio utilizável p/ derivação: presente, numérico >0 e com até FX_MAX_AGE."""
+    try:
+        if not fx or not isinstance(fx, dict):
+            return False
+        v = float(fx.get("usdbrl"))
+        if not (v > 0 and v < 1000):
+            return False
+        ts = float(fx.get("ts", 0))
+        return (time.time() - ts) <= FX_MAX_AGE
+    except Exception:
+        return False
 
 # ------------------- FETCH · USD/BRL (campo visível, v8.2) -----------------
 # Só o campo "CÂMBIO · USD/BRL". NÃO mexe no fetch_fx (derivações). Mid =
@@ -2972,7 +3003,10 @@ def _mid(a, b):
 
 def _ok_usdbrl(r):
     """Valida o mid: tem que ser um USD/BRL plausível."""
-    r = float(r)
+    try:
+        r = float(r)
+    except (TypeError, ValueError):
+        raise ValueError(f"USD/BRL inválido: {r!r}")
     if not (1.0 <= r <= 20.0):
         raise ValueError(f"USD/BRL fora de faixa: {r}")
     return r
@@ -5098,6 +5132,58 @@ def fetch_cds_br():
         errs.append(f"Investing.com: {e}")
     raise RuntimeError("CDS Brasil sem fonte (" + "; ".join(errs) + ")")
 
+
+def fetch_nvda_cds():
+    """CDS 5Y da NVIDIA (bps, indicativo) via CNBC quote sem chave.
+
+    Página: https://www.cnbc.com/quotes/NVDACD5 — JSON embutido com
+    "symbol":"NVDACD5", "last", "previous_day_closing", returnsData
+    (5D/1MO/3MO) e ranges FIVE_YEAR. Contrato novo (mid-Nov/2025),
+    sem série 5-10 anos em fonte gratuita; CNBC cobre ~jun/26 em
+    diante (low 36.25 em 01/06/26)."""
+    html = _http_get(CNBC_NVDA_CDS_URL, {"User-Agent": BROWSER_UA,
+                                         "Accept-Language": "en-US,en;q=0.9"},
+                     timeout=20).decode("utf-8", "replace")
+    m = re.search(r'"symbol":"NVDACD5".{0,2500}', html)
+    if not m:
+        raise ValueError("CNBC sem bloco NVDACD5")
+    blk = m.group(0)
+    bps = _to_float(re.search(r'"last":"([0-9.]+)"', blk).group(1)
+        if re.search(r'"last":"([0-9.]+)"', blk) else None)
+    if not bps or bps <= 0 or bps > 100000:
+        raise ValueError("sem preço válido NVDA")
+    prev = None
+    mp = re.search(r'"previous_day_closing":"([0-9.]+)"', blk)
+    if mp:
+        prev = _to_float(mp.group(1))
+    d_pct = (bps / prev - 1.0) * 100.0 if prev else None
+    lut = None
+    mt = re.search(r'"last_time":"([^"]+)"', blk)
+    if mt:
+        lut = mt.group(1)
+    out = {"bps": bps, "d_pct": d_pct, "dt": lut, "src": "CNBC",
+           "ts": time.time()}
+    mr = re.search(r'"returnsData":\[(.*?)\]', html)
+    if mr:
+        for typ, cpct in re.findall(
+                r'"type":"(5D|1MO|3MO)".*?"changePct":(-?[0-9.]+)', mr.group(1)):
+            try:
+                v = float(cpct)
+            except Exception:
+                continue
+            if typ == "5D":
+                out["w5d_pct"] = v
+            elif typ == "1MO":
+                out["m_pct"] = v
+            elif typ == "3MO":
+                out["m3m_pct"] = v
+    mg = re.search(r'"range":"FIVE_YEAR","high":([0-9.]+).*?"low":([0-9.]+)',
+                   html)
+    if mg:
+        out["hi5y"] = _to_float(mg.group(1))
+        out["lo5y"] = _to_float(mg.group(2))
+    return out
+
 # ------------------- FETCH · YIELD BRASIL NOMINAL (v8.0) ---------------------
 def _yield_mat_of_title(title):
     """'Brazil 10-Year' -> '10a' · 'Brazil 3-Month' -> '3m'. O slug da
@@ -5559,8 +5645,8 @@ def save_cache(data):
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f)
         os.replace(tmp, CACHE_FILE)     # atômico: crash no meio não corrompe
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"save_cache falhou: {e}")
 
 
 # --------------------- CAMADA "ACIMA DOS ÍCONES" (X11) ------------------
@@ -6236,6 +6322,7 @@ class GoldWidget:
         self.baseline = self.last.get("baseline") or None
         self.spot_offline = True                 # até o 1º spot ok
         self._poll_lock = threading.Lock()       # poller x "Atualizar agora"
+        self._manual_pending = False             # manual durante poll auto vira extra imediato
 
         root.title("OuroWidget")
         # v3: camada da área de trabalho (_NET_WM_WINDOW_TYPE_DESKTOP): o WM
@@ -6352,6 +6439,15 @@ class GoldWidget:
         self.l_cds_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
                                   font=("DejaVu Sans", 7))
         self.l_cds_sub.pack(anchor="w", padx=12, pady=(2, 8))
+
+        # ---------------- seção EUA · CDS NVIDIA 5A (indicativo) --------------
+        self.nvda_frame = tk.Frame(self.body, bg=BG)
+        self.nvda_frame.pack(anchor="w", padx=12, fill="x")
+        self._nvda_sig = None
+        self._nvda_refs = []
+        self.l_nvda_sub = tk.Label(self.body, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 7))
+        self.l_nvda_sub.pack(anchor="w", padx=12, pady=(2, 8))
 
         # ------------- seção BRASIL · YIELD NOMINAL (v8.0) -----------------
         # UMA linha (vencimento escolhido no DROPDOWN ▾) + rodapé com a
@@ -6504,6 +6600,7 @@ class GoldWidget:
                     ("Gasolina EUA", "fuel_gas"),
                     ("Diesel EUA", "fuel_diesel"),
                     ("CDS Brasil 5 anos", "cds_5y"),
+                    ("CDS NVIDIA 5 anos", "nvda_5y"),
                     ("Diesel NYMEX", "ho_f"),
                     ("Brent (benchmark)", "brent"),
                     ("Crude SC (Xangai)", "sc_f"),
@@ -7026,17 +7123,110 @@ class GoldWidget:
         threading.Thread(target=lambda: self._poll_now(), daemon=True).start()
 
     def _poll_now(self):
-        """Refresh manual: se um poll já está rodando, não empilha outro."""
+        """Refresh manual: se um poll já está rodando, agenda extra imediato."""
         if self._poll_lock.acquire(blocking=False):
             try:
-                self._poll_once_impl()
+                try:
+                    self._poll_once_impl()
+                except Exception as e:
+                    log(f"poll manual falhou: {e}")
+                    try:
+                        self.root.after(0, self._render)
+                    except Exception:
+                        pass
             finally:
                 self._poll_lock.release()
+        else:
+            try:
+                self._manual_pending = True
+            except Exception:
+                pass
+            log("Atualizar agora enfileirado: poll automático em andamento")
+            try:
+                # feedback imediato: não some no silêncio
+                self.root.after(0, self._render)
+            except Exception:
+                pass
 
     def _poll_once(self):
         """Serializa polls (um por vez). Retorna retry_after (429) ou None."""
         with self._poll_lock:
             return self._poll_once_impl()
+
+    def _commit_spot(self, usd, brl, fx):
+        """Atualiza USD/BRL no self.last. Retorna (usd_ok, brl_ok). Nunca levanta."""
+        usd_ok = False
+        try:
+            if usd and isinstance(usd, dict) and float(usd.get("price", 0) or 0) > 0:
+                self.last["usd_price"] = float(usd["price"])
+                try:
+                    self.last["usd_bid"] = float(usd["bid"]) if usd.get("bid") is not None else None
+                except Exception:
+                    self.last["usd_bid"] = None
+                try:
+                    self.last["usd_ask"] = float(usd["ask"]) if usd.get("ask") is not None else None
+                except Exception:
+                    self.last["usd_ask"] = None
+                self.last["usd_src"]   = "goldprice.dev"
+                usd_ok = True
+            else:
+                raise ValueError("sem USD da goldprice.dev")
+        except Exception as e:
+            log(f"USD goldprice.dev inválido ({e}); tentando goldprice.org")
+            try:
+                g = fetch_goldprice_org("USD")
+                gp = float((g or {}).get("price", 0) or 0)
+                if gp <= 0 or gp > 1000000:
+                    raise ValueError(f"goldprice.org USD fora de faixa: {gp}")
+                self.last["usd_price"] = gp
+                self.last["usd_bid"]   = None
+                self.last["usd_ask"]   = None
+                self.last["usd_src"]   = "goldprice.org"
+                usd_ok = True
+                log("goldprice.dev falhou; usando goldprice.org")
+            except Exception as e2:
+                log(f"goldprice.org (USD) também falhou: {e2}")
+        brl_ok = False
+        try:
+            if brl and isinstance(brl, dict) and float(brl.get("price", 0) or 0) > 0:
+                self.last["brl_price"] = float(brl["price"])
+                self.last["brl_src"]   = "goldprice.dev"
+                brl_ok = True
+            elif usd_ok and _fx_fresh(fx):
+                try:
+                    uv = float(self.last.get("usd_price", 0) or 0)
+                    fv = float((fx or {}).get("usdbrl", 0) or 0)
+                    if uv > 0 and fv > 0:
+                        self.last["brl_price"] = uv * fv
+                        self.last["brl_src"]   = "derivado USDxBRL"
+                        brl_ok = True
+                    else:
+                        raise ValueError(f"base inválida: usd={uv} fx={fv}")
+                except Exception as e:
+                    log(f"derivação USDxBRL falhou ({e}); tentando goldprice.org/BRL")
+                    raise
+            else:
+                raise ValueError("sem BRL direto nem derivação possível")
+        except Exception:
+            pass
+        if not brl_ok:
+            try:
+                g = fetch_goldprice_org("BRL")
+                gp = float((g or {}).get("price", 0) or 0)
+                if gp <= 0 or gp > 100000000:
+                    raise ValueError(f"goldprice.org BRL fora de faixa: {gp}")
+                self.last["brl_price"] = gp
+                self.last["brl_src"]   = "goldprice.org"
+                brl_ok = True
+                log("sem derivação possível; usando goldprice.org/BRL")
+            except Exception as e:
+                log(f"goldprice.org (BRL) também falhou: {e}")
+        if usd_ok or brl_ok:
+            try:
+                self.last["ts"] = time.time()
+            except Exception as e:
+                log(f"falha ao carimbar ts: {e}")
+        return usd_ok, brl_ok
 
     def _poll_once_impl(self):
         """Retorna retry_after (429) ou None."""
@@ -7061,6 +7251,29 @@ class GoldWidget:
         fx = self.last.get("fx")
         self.last.pop("china", None)
         self.last.pop("gc_fut", None)
+
+        # FAST-PATH: spot primeiro, antes das 15 seções lentas. Garante que
+        # "Atualizar agora" mostra preço em segundos mesmo com Investing/
+        # OilPrice/FRED lentos (sábado = minutos). Salva + render imediato.
+        try:
+            _eu_ok, _eb_ok = self._commit_spot(usd, brl, fx)
+            if _eu_ok or _eb_ok:
+                try:
+                    save_cache(self.last)
+                except Exception as e:
+                    log(f"save early falhou: {e}")
+                try:
+                    self.root.after(0, self._set_spot_offline,
+                                    not (_eu_ok or _eb_ok))
+                    self.root.after(0, self._render)
+                    try:
+                        self.root.after(0, self._tray_refresh_soon)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    log(f"render early falhou: {e}")
+        except Exception as e:
+            log(f"commit early do spot falhou sem matar poll: {e}")
 
         # ---- Cobre · COMEX HG=F (v7.2): intraday, refetch no máx.
         #      1/5min; cadeia Yahoo -> FXEmpire -> TradingEconomics ->
@@ -7124,6 +7337,20 @@ class GoldWidget:
         if cds and time.time() - cds.get("ts", 0) > CDS_MAX_AGE:
             self.last.pop("cds_br", None)
             log("CDS Brasil: cache >7 dias sem fonte; removido")
+
+        # ---- EUA · CDS NVIDIA 5A (indicativo, CNBC) ----
+        nvda = self.last.get("nvda_cds")
+        if _due("nvda_cds", nvda, NVDA_CDS_POLL_SECONDS):
+            try:
+                self.last["nvda_cds"] = fetch_nvda_cds()
+                _cooldown_clear("nvda_cds")
+            except Exception as e:
+                log(f"CDS NVDA indisponível ({e}); mantendo cache")
+                _cooldown("nvda_cds", NVDA_CDS_POLL_SECONDS, str(e))
+        nvda = self.last.get("nvda_cds")
+        if nvda and time.time() - nvda.get("ts", 0) > NVDA_CDS_MAX_AGE:
+            self.last.pop("nvda_cds", None)
+            log("CDS NVDA: cache >7 dias sem fonte; removido")
 
         # ---- Brasil · Yield nominal (v8.0): refetch no máx. 1/15min;
         #      cadeia Investing-tabela (www/m.) -> TE 10y -> instrumento ->
@@ -7349,71 +7576,62 @@ class GoldWidget:
                 log(f"USD/BRL indisponível ({e}); mantendo cache")
                 _cooldown("usdbrl", USDBRL_REFETCH, str(e))
         ub = self.last.get("usdbrl")
-        if ub and (ub.get("rate") is None
-                   or time.time() - ub.get("ts", 0) > USDBRL_MAX_AGE):
+        try:
+            _ub_ts = float((ub or {}).get("ts", 0) or 0)
+        except Exception:
+            _ub_ts = 0
+        if isinstance(ub, dict) and (ub.get("rate") is None
+                   or time.time() - _ub_ts > USDBRL_MAX_AGE):
             self.last.pop("usdbrl", None)
             log("USD/BRL: cache >24h sem fonte; removido")
 
-        usd_ok = False
-        if usd:
-            self.last["usd_price"] = usd["price"]
-            self.last["usd_bid"]   = usd["bid"]
-            self.last["usd_ask"]   = usd["ask"]
-            self.last["usd_src"]   = "goldprice.dev"
-            usd_ok = True
-        else:           # última linha: goldprice.org (Sina removida a pedido do usuário)
-            try:
-                g = fetch_goldprice_org("USD")
-                self.last["usd_price"] = g["price"]
-                self.last["usd_bid"]   = None
-                self.last["usd_ask"]   = None
-                self.last["usd_src"]   = "goldprice.org"
-                usd_ok = True
-                log("goldprice.dev falhou; usando goldprice.org")
-            except Exception as e:
-                log(f"goldprice.org (USD) também falhou: {e}")
-
-        brl_ok = False
-        if brl:
-            self.last["brl_price"] = brl["price"]
-            self.last["brl_src"]   = "goldprice.dev"
-            brl_ok = True
-        elif usd_ok and _fx_fresh(fx):
-            # fallback: BRL derivado do spot USD x câmbio oficial — só com
-            # USD deste ciclo e câmbio de até FX_MAX_AGE (nada de dado velho)
-            self.last["brl_price"] = self.last["usd_price"] * fx["usdbrl"]
-            self.last["brl_src"]   = "derivado USDxBRL"
-            brl_ok = True
-        else:           # sem spot/câmbio fresco: BRL direto do goldprice.org
-            try:
-                g = fetch_goldprice_org("BRL")
-                self.last["brl_price"] = g["price"]
-                self.last["brl_src"]   = "goldprice.org"
-                brl_ok = True
-                log("sem derivação possível; usando goldprice.org/BRL")
-            except Exception as e:
-                log(f"goldprice.org (BRL) também falhou: {e}")
-
-        if usd_ok or brl_ok:
-            self.last["ts"] = time.time()
-        self.last["baseline"] = self.baseline
+        # Re-commit final (idempotente com o early): garante ts/baseline
+        # mesmo se fx mudou durante as seções lentas. Nunca levanta.
+        try:
+            usd_ok, brl_ok = self._commit_spot(usd, brl, self.last.get("fx", fx))
+        except Exception as e:
+            log(f"commit final do spot falhou: {e}")
+            usd_ok, brl_ok = bool(self.last.get("usd_price")), bool(self.last.get("brl_price"))
+        try:
+            self.last["baseline"] = self.baseline
+        except Exception as e:
+            log(f"falha ao gravar baseline: {e}")
 
         # variação diária (vs abertura do dia UTC). Baseline de OUTRO dia
         # (refresh falhou na virada UTC) não pode virar "variação no dia"
-        b = self.baseline
-        if b and b.get("day") == today and self.last.get("usd_price"):
-            g_usd = self.last["usd_price"] / b["paxg_open"] - 1.0
-            self.last["usd_day_pct"] = g_usd * 100.0
-            self.last["brl_day_pct"] = ((1.0 + g_usd) *
-                                        (1.0 + b["fx_day_pct"] / 100.0) - 1.0) * 100.0
-            # variação na semana (vs 7 dias atrás)
-            pw = b.get("paxg_week_open")
-            if pw:
-                g_sem = self.last["usd_price"] / pw - 1.0
-                self.last["usd_week_pct"] = g_sem * 100.0
-                self.last["brl_week_pct"] = ((1.0 + g_sem) *
-                                             (1.0 + (b.get("fx_week_pct") or 0.0) / 100.0)
-                                             - 1.0) * 100.0
+        try:
+            b = self.baseline
+            if b and isinstance(b, dict) and b.get("day") == today and self.last.get("usd_price"):
+                try:
+                    up = float(self.last["usd_price"])
+                    po = float(b.get("paxg_open"))
+                    fxp = float(b.get("fx_day_pct", 0) or 0)
+                    if up > 0 and po > 0:
+                        g_usd = up / po - 1.0
+                        self.last["usd_day_pct"] = g_usd * 100.0
+                        self.last["brl_day_pct"] = ((1.0 + g_usd) *
+                                                    (1.0 + fxp / 100.0) - 1.0) * 100.0
+                        # variação na semana (vs 7 dias atrás)
+                        try:
+                            pw = b.get("paxg_week_open")
+                            if pw is not None:
+                                pwf = float(pw)
+                                if pwf > 0:
+                                    g_sem = up / pwf - 1.0
+                                    self.last["usd_week_pct"] = g_sem * 100.0
+                                    try:
+                                        fxpw = float(b.get("fx_week_pct") or 0.0)
+                                    except Exception:
+                                        fxpw = 0.0
+                                    self.last["brl_week_pct"] = ((1.0 + g_sem) *
+                                                                  (1.0 + fxpw / 100.0)
+                                                                  - 1.0) * 100.0
+                        except Exception as e:
+                            log(f"variação semanal ignorada: {e}")
+                except Exception as e:
+                    log(f"variação do dia ignorada: {e}")
+        except Exception as e:
+            log(f"bloco de variação falhou sem matar poll: {e}")
 
         # Cache é salvo sempre.
         try:
@@ -7437,6 +7655,9 @@ class GoldWidget:
             _cds = _L.get("cds_br") or {}
             if _cds.get("bps"):
                 log_hist_point(_H, "cds_5y", _cds["bps"])
+            _nvda = _L.get("nvda_cds") or {}
+            if _nvda.get("bps"):
+                log_hist_point(_H, "nvda_5y", _nvda["bps"])
             for _ym, _yr in ((_L.get("br_yield") or {}).get("curve") or {}).items():
                 if _yr.get("yield"):
                     log_hist_point(_H, f"br_yield:{_ym}", _yr["yield"])
@@ -7492,13 +7713,41 @@ class GoldWidget:
     def _poll_loop(self):
         wait = POLL_SECONDS
         while not self.stop.is_set():
-            retry = self._poll_once()
-            if retry is not None:
-                wait = min(max(retry + 5, 30), 3600)
-                log(f"429 na fonte; próxima tentativa em {wait:.0f}s")
-            else:
-                wait = POLL_SECONDS + random.uniform(0, 10)  # v6.4: jitter
-            self.stop.wait(wait)
+            try:
+                retry = self._poll_once()
+            except Exception as e:
+                log(f"poll automático falhou (loop protegido): {e}")
+                retry = None
+            # manual clicado durante o poll vira extra imediato, sem esperar 90s
+            try:
+                if getattr(self, "_manual_pending", False):
+                    self._manual_pending = False
+                    log("executando Atualizar agora enfileirado")
+                    try:
+                        retry2 = self._poll_once()
+                        if retry2 is not None and (retry is None or retry2 > retry):
+                            retry = retry2
+                    except Exception as e:
+                        log(f"poll manual enfileirado falhou: {e}")
+            except Exception as e:
+                log(f"falha ao processar manual pendente: {e}")
+            try:
+                if retry is not None:
+                    wait = min(max(retry + 5, 30), 3600)
+                    log(f"429 na fonte; próxima tentativa em {wait:.0f}s")
+                else:
+                    try:
+                        wait = POLL_SECONDS + random.uniform(0, 10)  # v6.4: jitter
+                    except Exception:
+                        wait = POLL_SECONDS
+            except Exception as e:
+                log(f"falha ao calcular wait do poll: {e}")
+                wait = POLL_SECONDS
+            try:
+                self.stop.wait(wait)
+            except Exception as e:
+                log(f"falha no wait do poll: {e}")
+                break
 
     def _tray_refresh_soon(self):
         """Refresh da bandeja após novo ciclo (label/título). Nunca levanta."""
@@ -7514,35 +7763,70 @@ class GoldWidget:
         self._render()
 
     def _render(self):
-        data = self.last
-        if not data or not (data.get("usd_price") or data.get("brl_price")):
-            self.l_usd.config(text="—")
-            self.l_brl.config(text="—")
-            self.l_sub.config(text="sem dados ainda", fg=TXT_DIM)
-        else:
-            if data.get("usd_price"):
-                self.l_usd.config(text=f"US$ {fmt_usd(data['usd_price'])}")
-            if data.get("brl_price"):
-                self.l_brl.config(text=f"R$ {fmt_brl(data['brl_price'] / TROY_OZ_GRAMS)}/g")
+        try:
+            data = self.last or {}
+        except Exception:
+            data = {}
+        try:
+            if not data or not (data.get("usd_price") or data.get("brl_price")):
+                self.l_usd.config(text="—")
+                self.l_brl.config(text="—")
+                self.l_sub.config(text="sem dados ainda", fg=TXT_DIM)
+            else:
+                try:
+                    if data.get("usd_price"):
+                        self.l_usd.config(text=f"US$ {fmt_usd(data['usd_price'])}")
+                except Exception as e:
+                    log(f"render usd falhou: {e}")
+                try:
+                    if data.get("brl_price"):
+                        self.l_brl.config(text=f"R$ {fmt_brl(float(data['brl_price']) / TROY_OZ_GRAMS)}/g")
+                except Exception as e:
+                    log(f"render brl falhou: {e}")
 
-            for lab, lab_sem, key, key_sem in (
-                    (self.l_usd_var, self.l_usd_var_week,
-                     "usd_day_pct", "usd_week_pct"),
-                    (self.l_brl_var, self.l_brl_var_week,
-                     "brl_day_pct", "brl_week_pct")):
-                p = data.get(key)
-                if p is None:
-                    lab.config(text="—", fg=TXT_DIM)
-                else:
-                    lab.config(text=f"{fmt_pct(p)} no dia",
-                               fg=UP_COLOR if p >= 0 else DOWN_COLOR)
-                s = data.get(key_sem)
-                if s is None:
-                    lab_sem.config(text="", fg=TXT_DIM)
-                else:
-                    lab_sem.config(text=f"{fmt_pct(s)} na semana",
-                                   fg=UP_COLOR if s >= 0 else DOWN_COLOR)
-            self._render_sub()
+                for lab, lab_sem, key, key_sem in (
+                        (self.l_usd_var, self.l_usd_var_week,
+                         "usd_day_pct", "usd_week_pct"),
+                        (self.l_brl_var, self.l_brl_var_week,
+                         "brl_day_pct", "brl_week_pct")):
+                    try:
+                        p = data.get(key)
+                        if p is None:
+                            lab.config(text="—", fg=TXT_DIM)
+                        else:
+                            try:
+                                pf = float(p)
+                            except Exception:
+                                lab.config(text="—", fg=TXT_DIM)
+                                pf = None
+                            if pf is None:
+                                pass
+                            else:
+                                lab.config(text=f"{fmt_pct(pf)} no dia",
+                                           fg=UP_COLOR if pf >= 0 else DOWN_COLOR)
+                    except Exception as e:
+                        log(f"render var dia {key} falhou: {e}")
+                    try:
+                        s = data.get(key_sem)
+                        if s is None:
+                            lab_sem.config(text="", fg=TXT_DIM)
+                        else:
+                            try:
+                                sf = float(s)
+                            except Exception:
+                                lab_sem.config(text="", fg=TXT_DIM)
+                                sf = None
+                            if sf is not None:
+                                lab_sem.config(text=f"{fmt_pct(sf)} na semana",
+                                               fg=UP_COLOR if sf >= 0 else DOWN_COLOR)
+                    except Exception as e:
+                        log(f"render var semana {key_sem} falhou: {e}")
+                try:
+                    self._render_sub()
+                except Exception as e:
+                    log(f"render sub falhou: {e}")
+        except Exception as e:
+            log(f"_render falhou sem matar poll: {e}")
 
         # REMOVIDO (2026-09-17): COMEX + China não renderizam mais
         self.last.pop("china", None)
@@ -7562,6 +7846,10 @@ class GoldWidget:
         # seção BRASIL · CDS 5 anos (v5.7)
         self._render_cds()
         self._render_cds_sub()
+
+        # seção EUA · CDS NVIDIA 5A (indicativo)
+        self._render_nvda()
+        self._render_nvda_sub()
 
         # seção BRASIL · yield nominal (v8.0)
         self._render_yield()
@@ -7620,30 +7908,56 @@ class GoldWidget:
             pass
 
     def _render_sub(self):
-        data = self.last
-        bid, ask = data.get("usd_bid"), data.get("usd_ask")
-        sub = (f"bid {fmt_usd(bid) if bid else '—'} · "
-               f"ask {fmt_usd(ask) if ask else '—'}")
-        ts = data.get("ts")
-        if ts:
-            age = max(0, int(time.time() - ts))
-            sub += f" · há {age}s"
-        if self.spot_offline:
-            sub += "   · spot offline (cache)"
-        src = data.get("usd_src")
-        if src and src != "goldprice.dev":
-            sub += f" · fonte: {src}"
-        self.l_sub.config(text=sub, fg=TXT_DIM)
+        data = self.last or {}
+        try:
+            bid, ask = data.get("usd_bid"), data.get("usd_ask")
+        except Exception:
+            bid, ask = None, None
+        try:
+            sub = (f"bid {fmt_usd(bid) if bid else '—'} · "
+                   f"ask {fmt_usd(ask) if ask else '—'}")
+        except Exception:
+            sub = "bid — · ask —"
+        try:
+            ts = data.get("ts")
+            if ts is not None:
+                age = max(0, int(time.time() - float(ts)))
+                sub += f" · há {age}s"
+        except Exception:
+            pass
+        try:
+            if self.spot_offline:
+                sub += "   · spot offline (cache)"
+            src = data.get("usd_src")
+            if src and src != "goldprice.dev":
+                sub += f" · fonte: {src}"
+        except Exception:
+            pass
+        try:
+            self.l_sub.config(text=sub, fg=TXT_DIM)
+        except Exception as e:
+            log(f"render sub falhou: {e}")
 
     def _render_usdbrl(self):
         """Campo visível USD/BRL (v8.2): só o valor, mid 4 dec pt-BR.
-        Cache ≤24h se a cadeia caiu; senão "—"."""
-        d = self.last.get("usdbrl") or {}
-        rate = d.get("rate")
-        if rate is None or time.time() - d.get("ts", 0) > USDBRL_MAX_AGE:
-            self.l_usdbrl.config(text="—")
-            return
-        self.l_usdbrl.config(text=f"US$ 1 = R$ {fmt_fx4(rate)}")
+        Cache ≤24h se a cadeia caiu; senão "—". Nunca levanta."""
+        try:
+            d = self.last.get("usdbrl") or {}
+            rate = d.get("rate")
+            try:
+                ts = float(d.get("ts", 0) or 0)
+            except Exception:
+                ts = 0
+            if rate is None or time.time() - ts > USDBRL_MAX_AGE:
+                self.l_usdbrl.config(text="—")
+                return
+            self.l_usdbrl.config(text=f"US$ 1 = R$ {fmt_fx4(rate)}")
+        except Exception as e:
+            log(f"render usdbrl falhou: {e}")
+            try:
+                self.l_usdbrl.config(text="—")
+            except Exception:
+                pass
 
     # ------------------ exibição · seção FUTURO COMEX (v5.6) --------------
     def _fut_label(self, rec=None):
@@ -7956,6 +8270,91 @@ class GoldWidget:
             if age > CDS_POLL_SECONDS * 2:
                 parts.append("(cache)")
         self.l_cds_sub.config(text=" · ".join(parts), fg=TXT_DIM)
+
+    def _nvda_rows(self):
+        d = self.last.get("nvda_cds") or {}
+        rows = []
+        if d.get("bps"):
+            rows.append((("h", "── EUA · CDS NVIDIA 5A (indicativo) ──"),
+                         None, None, None))
+            rows.append((("r", "NVDA 5 anos"),
+                         f"{fmt_bps(d['bps'])} bps",
+                         d.get("m_pct"), " 1m"))
+            extra = []
+            if d.get("w5d_pct") is not None:
+                extra.append(f"5d {d['w5d_pct']:+.1f}%".replace(".", ","))
+            if d.get("m3m_pct") is not None:
+                extra.append(f"3m {d['m3m_pct']:+.1f}%".replace(".", ","))
+            if extra:
+                rows.append((("r", "   " + " · ".join(extra)),
+                             "", None, None))
+            if d.get("hi5y") or d.get("lo5y"):
+                hi = f"{d['hi5y']:.1f}".replace(".", ",") if d.get("hi5y") else "—"
+                lo = f"{d['lo5y']:.1f}".replace(".", ",") if d.get("lo5y") else "—"
+                rows.append((("r", f"   5A máx {hi} / mín {lo}"),
+                             "", None, None))
+        return rows
+
+    def _render_nvda(self):
+        rows = self._nvda_rows()
+        sig = tuple(r[0] for r in rows)
+        if sig != self._nvda_sig:
+            for w in self.nvda_frame.winfo_children():
+                w.destroy()
+            self._nvda_refs = []
+            grid = 0
+            for r in rows:
+                kind = r[0][0]
+                if kind == "h":
+                    lab = tk.Label(self.nvda_frame, text=r[0][1], bg=BG,
+                                   fg=TITLE, font=("DejaVu Sans", 7, "bold"),
+                                   anchor="w")
+                    lab.grid(row=grid, column=0, columnspan=3, sticky="w",
+                             pady=(7 if grid else 0, 1))
+                    self._bind(lab)
+                    self._nvda_refs.append(("h", lab))
+                else:
+                    ln = tk.Label(self.nvda_frame, text=r[0][1], bg=BG,
+                                  fg=TXT_DIM, font=("DejaVu Sans", 8),
+                                  anchor="w")
+                    lp = tk.Label(self.nvda_frame, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 8, "bold"), anchor="e")
+                    lv = tk.Label(self.nvda_frame, text="", bg=BG, fg=TXT_DIM,
+                                  font=("DejaVu Sans", 8), anchor="e")
+                    ln.grid(row=grid, column=0, sticky="w")
+                    lp.grid(row=grid, column=1, sticky="e", padx=(16, 6))
+                    lv.grid(row=grid, column=2, sticky="e")
+                    for w in (ln, lp, lv):
+                        self._bind(w, "nvda_5y")
+                    self._nvda_refs.append(("r", ln, lp, lv))
+                grid += 1
+            self.nvda_frame.columnconfigure(0, weight=1)
+            self._nvda_sig = sig
+        for ref, r in zip(self._nvda_refs, rows):
+            if ref[0] == "h":
+                continue
+            _, lp, lv = ref[1], ref[2], ref[3]
+            price_str, pct, suf = r[1], r[2], r[3]
+            lp.config(text=price_str, fg=TXT_USD)
+            if pct is None:
+                lv.config(text="")
+            else:
+                lv.config(text=f"{fmt_pct(pct)}{suf}",
+                          fg=UP_COLOR if pct >= 0 else DOWN_COLOR)
+
+    def _render_nvda_sub(self):
+        d = self.last.get("nvda_cds") or {}
+        parts = []
+        if d.get("dt"):
+            parts.append(f"{d.get('src') or 'CNBC'} {d['dt']}")
+        ts = d.get("ts")
+        if ts:
+            age = max(0, int(time.time() - ts))
+            parts.append(f"há {age}s")
+            if age > NVDA_CDS_POLL_SECONDS * 2:
+                parts.append("(cache)")
+        parts.append("contrato desde nov/25")
+        self.l_nvda_sub.config(text=" · ".join(parts), fg=TXT_DIM)
 
     # ------------- exibição · seção BRASIL · YIELD NOMINAL (v8.0) ----------
     def _yield_rows(self):
@@ -8979,6 +9378,7 @@ class GoldWidget:
         self._render_sub()
         self._render_us_sub()
         self._render_cds_sub()      # reavalia idade/cache do CDS
+        self._render_nvda_sub()     # reavalia idade/cache do CDS NVDA
         self._render_yield_sub()    # reavalia idade/cache do yield
         self._render_us_yield_sub()  # reavalia idade/cache do yield EUA
         self._render_ho_sub()       # reavalia idade/cache do HO=F
@@ -9143,6 +9543,7 @@ class GoldWidget:
             ("Gasolina EUA", "fuel_gas"),
             ("Diesel EUA", "fuel_diesel"),
             ("CDS Brasil 5 anos", "cds_5y"),
+            ("CDS NVIDIA 5 anos", "nvda_5y"),
             ("Diesel NYMEX", "ho_f"),
             ("Brent (benchmark)", "brent"),
             ("Crude SC (Xangai)", "sc_f"),
@@ -9283,6 +9684,22 @@ def dump():
               f"({', '.join(vars_)}){pd_s} — {c.get('dt', '')}")
     except Exception as e:
         print(f"CDS BR 5Y: FALHOU ({e})")
+
+    try:
+        n = fetch_nvda_cds()
+        last["nvda_cds"] = n
+        vars_ = []
+        for lbl, k in (("1d", "d_pct"), ("5d", "w5d_pct"),
+                       ("1m", "m_pct"), ("3m", "m3m_pct")):
+            if n.get(k) is not None:
+                vars_.append(f"{lbl} {n[k]:+.2f}%")
+        hl = ""
+        if n.get("hi5y") or n.get("lo5y"):
+            hl = f" · 5A máx {n.get('hi5y')} / mín {n.get('lo5y')}"
+        print(f"CDS NVDA 5Y [{n.get('src', 'CNBC')}]: {n['bps']:.2f} bps "
+              f"({', '.join(vars_)}){hl} — {n.get('dt', '')} (contrato desde nov/25)")
+    except Exception as e:
+        print(f"CDS NVDA 5Y: FALHOU ({e})")
 
     try:
         y = fetch_yield_br(YIELD_DEFAULT)
