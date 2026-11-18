@@ -3,13 +3,13 @@
 ![Python](https://img.shields.io/badge/python-3.x-3776AB?logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/plataforma-Linux%20%C2%B7%20X11-FCC624?logo=linux&logoColor=black)
 ![Dependências](https://img.shields.io/badge/depend%C3%AAncias-somente%20stdlib-00A86B)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-v8.6-c9a227)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-v8.7-c9a227)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20pessoal-lightgrey)
 
 Widget de desktop em **Python puro** (tkinter) que vive na sua área de trabalho e mostra, em tempo quase real e **sem nenhuma chave de API**:
 
 - **Ouro spot** em USD/onça e R$/grama;
-- **Câmbio USD/BRL** — só o valor, mid 4 casas ("US$ 1 = R$ 5,1526"), com cadeia de **10 fontes**;
+- **Câmbio USDT/BRL** — só o valor, mid 4 casas ("1 USDT = R$ 5,8103"), com cadeia de **4 exchanges** (Binance → Bybit → Bitget → BitPreco);
 - **Cobre** — COMEX `HG=F` (benchmark global) e SHFE `CU0` (China), ambos em US$/lb para comparar o prêmio chinês de graça;
 - **Combustível EUA** — média nacional **diária** de varejo da bomba (gasolina regular e diesel, AAA);
 - **Risco soberano do Brasil** — CDS 5 anos em bps + probabilidade de default implícita;
@@ -47,7 +47,7 @@ Widget de desktop em **Python puro** (tkinter) que vive na sua área de trabalho
 
 ## O que ele faz
 
-Um cartão discreto no canto superior direito da tela que exibe (exemplo real, `--dump` de 23/09/2026):
+Um cartão discreto no canto superior direito da tela que exibe (exemplo de `--dump`; valores mudam a cada chamada):
 
 ```
 OURO · SPOT
@@ -55,8 +55,8 @@ US$ 4,285.65   ▲ 0.42% no dia   ▲ 1.87% na semana
 R$ 885,32/g    ▼ 0.11% no dia   ▲ 1.52% na semana
 bid 4,285.1 · ask 4,286.2 · há 34s
 
-CÂMBIO · USD/BRL
-US$ 1 = R$ 5,1526
+CÂMBIO · USDT/BRL
+1 USDT = R$ 5,8103
 
 ── COBRE ──
 HG=F · COMEX · dez/26     US$ 6.76/lb        ▼ 1.08%
@@ -111,7 +111,7 @@ Cada seção tem um rodapé próprio com a fonte usada, frescor do dado ("há Ns
 ## Recursos
 
 - Spot **USD** (`goldprice.dev` → `goldprice.org`) e **BRL** derivado com câmbio fresco
-- **Câmbio USD/BRL visível (v8.2)**: só o valor (mid, 4 casas pt-BR), **10 fontes** com queda automática em cascata — awesomeapi → Yahoo `USDBRL=X` → TradingEconomics → floatrates → currency-api (pages.dev **→** jsDelivr) → open.er-api → frankfurter.dev → BCB SGS → Olinda PTAX → BCB SOAP → cache 24h
+- **Câmbio USDT/BRL visível (v8.7)**: só o valor (mid, 4 casas pt-BR), **4 exchanges** com queda automática em cascata — Binance `bookTicker` (host api → espelho data-api) → Bybit → Bitget → BitPreco → cache 24h; se todas caírem, "—" (nunca cai em dólar fiat)
 - Câmbio interno USD/BRL e CNY/BRL das derivações (`fetch_fx`, intacto) com 3 fontes (`awesomeapi` → `currency-api`/jsDelivr → `open.er-api.com`)
 - Baseline diário/semanal via **PAXG**: Binance → OKX (fora da quota da API principal)
 - **Cobre COMEX HG=F** (v7.2): intraday US$/lb — Yahoo → FXEmpire (CFD Oanda) → TradingEconomics → cache 4d
@@ -139,7 +139,7 @@ Toda fonte tem plano B (e C, D...). Se uma responde erro **ou responde sem dado*
 |---|---|---|---|
 | **Ouro spot USD** | `goldprice.dev` → `goldprice.org` | 90 s | — |
 | **Ouro spot BRL** | `goldprice.dev` → derivado USD × USDBRL → `goldprice.org/BRL` | 90 s | — |
-| **Câmbio USD/BRL (campo visível, v8.2)** | awesomeapi (bid/ask) → Yahoo `USDBRL=X` (chart q2→q1) → TradingEconomics `/brazil/currency` (scrape `market_last`) → floatrates → currency-api (**pages.dev** → jsDelivr; reserva `1/brl.usd`) → open.er-api → frankfurter.dev → BCB SGS (10813 compra + 1 venda → mid) → Olinda PTAX (Dia → Período) → BCB SOAP www3 → cache 24h | 90 s | 24 h |
+| **Câmbio USDT/BRL (campo visível, v8.7)** | Binance `bookTicker` (bid/ask; host api → espelho `data-api.binance.vision`) → Bybit `tickers` (bid1/ask1) → Bitget `tickers` (bidPr/askPr) → BitPreco `ticker` (buy/sell, exchange BR/PIX) → cache 24h; mid = (bid+ask)/2 ou (buy+sell)/2; sem fiat no caminho | 90 s | 24 h |
 | **Câmbio USD/BRL, CNY/BRL (derivações)** | awesomeapi → currency-api (jsDelivr) → open.er-api.com | 90 s | — |
 | **Baseline dia/semana (PAXG)** | Binance klines → OKX candles 1Dutc | 90 s | — |
 | **Cobre COMEX HG=F** (US$/lb) | Yahoo `HG=F` (chart, q1→q2 em 429) → FXEmpire `/commodities/copper` (CFD Oanda) → TradingEconomics (scrape) → cache 4d | 5 min | 4 dias |
@@ -162,6 +162,7 @@ Toda fonte tem plano B (e C, D...). Se uma responde erro **ou responde sem dado*
 
 Notas de robustez:
 
+- **Câmbio USDT/BRL:** é stablecoin, não PTAX. O USDT costuma negociar com prêmio de ~0,3–0,6% sobre o dólar fiat (hoje ~5,81 vs ~5,78), então o número **não vai bater** com Google/BCB por design; a cadeia usa só exchanges e, se todas caírem, mantém cache 24 h e depois mostra "—" (nunca mistura fiat).
 - **Cobre:** o FXEmpire espelha o contrato **mais líquido** (dez/26, OI ~175 mil — o front set/26 tem OI ~1,3 mil), que é o benchmark do HG; o CU0 usa a variação vs **settlement** anterior (convenção chinesa) e a mesma unidade US$/lb do COMEX para o prêmio SHFE ser comparável de graça.
 - **Yield Brasil:** a curva exibida é a **nominal** (LTN/NTN, 14,17% 10y) — a NTN-B **real** do worldgovernmentbonds (7,38% 10y) fica FORA por decisão: bases diferentes não se misturam no mesmo número. O vencimento vem do `title` da linha do Investing, não do slug (no 8y o slug deles discorda do título). Δ em **pontos percentuais**, não % relativo.
 - **Yield EUA:** só a **nominal** UST (TIPS/real fica FORA, mesma regra da NTN-B). Bills (≤1a, taxa de desconto) e notes/bonds (2–30a, coupon yield) **misturados** como no noticiário, com o tipo no nome de cada vencimento. O vencimento vem do `title` do `<a>` (os dois formatos `United States 10-Year` e `U.S. 20-Year` existem na mesma tabela; o 20y ainda tem slug `us-20-year-…` sem os pontos dos demais) com fallback no slug do `href`. O FRED **pendura** (timeout) em UA de navegador e no `gold-widget/5.0` — os fetches dele usam `FRED_UA` (isso também conserta o fallback de combustível, que morria em timeout).
@@ -272,7 +273,7 @@ Por padrão o widget vive numa camada especial: **acima dos ícones do desktop e
 
 ```text
 $ python3 gold_widget.py --dump
-USD/BRL [awesomeapi]: 5.1722 (mid)
+USDT/BRL [binance]: 5.8103 (mid)
 FX [awesomeapi]: USDBRL 5.1526 · CNYBRL 0.7614 · USDCNY 6.7674
 goldprice.dev XAU-USD-SPOT: 4,285.65 (bid None · ask None)
 goldprice.dev XAU-BRL-SPOT: 22,150.95 (bid None · ask None)
@@ -317,7 +318,7 @@ Constantes no topo do `gold_widget.py`:
 | `POLL_SECONDS` | `90` | intervalo entre buscas (respeite a quota da API) |
 | `NET_TIMEOUT` | `8` | timeout de rede em segundos |
 | `FX_MAX_AGE` | `15 min` | câmbio mais velho que isso não é usado p/ derivação |
-| `USDBRL_REFETCH` / `USDBRL_MAX_AGE` | `90 s` / `24 h` | cadência e expiração do campo visível USD/BRL (v8.2) |
+| `USDTBRL_REFETCH` / `USDTBRL_MAX_AGE` | `90 s` / `24 h` | cadência e expiração do campo visível USDT/BRL (v8.7) |
 | `FUT_STALE` | `10 min` | idade a partir da qual o rótulo ganha "(cache)" |
 | `HG_REFETCH` / `HG_MAX_AGE` | `5 min` / `4 dias` | cadência e expiração do cobre COMEX HG=F |
 | `CU_REFETCH` / `CU_MAX_AGE` | `5 min` / `4 dias` | cadência e expiração do cobre SHFE CU0 |
@@ -380,6 +381,7 @@ A solução: o widget cria-se como tipo `desktop` e depois envia ao WM um *clien
 | **v8.2** | **Seção CÂMBIO · USD/BRL** logo abaixo do OURO · SPOT: só o valor (mid 4 casas pt-BR, `US$ 1 = R$ 5,1526`), `fetch_usdbrl()` separado do `fetch_fx` (derivações intactas); cadeia de **10 degraus** com queda automática em cascata (falha → próximo; próximo falhou → outro): awesomeapi → Yahoo `USDBRL=X` → TradingEconomics → floatrates → currency-api (**pages.dev** 1º — o jsDelivr `@latest` serve cotação velha) → open.er-api → frankfurter.dev → BCB SGS → Olinda PTAX → BCB SOAP; mid = (compra+venda)/2 ou (bid+ask)/2; cooldown por fonte; cache 24h; também no `--dump` |
 | **v8.5** | **Seção CRÉDITO · DEUS-FREEZE RF**: termômetro mensal 0-100 (`25% mkt + 15% SLOOS + 25% solv + 35% freeze`, bandas `CALMO/ATENÇÃO/TRAVA/QUEBRA`), rating-free (VIX+BONDVOL+DISTRESS+OAS/TED, NCO FDIC + falências Courts, sem Fitch/Moody's), módulo próprio `deus_freeze_rf.py` + snapshot `data/fred/*.csv` + download semanal FRED com fallback offline; valor + banda + decomposição na UI, gráfico mensal no clique, `--dump` e `history.json`; testes cobrem `deus_rf` |
 | **v8.6** | **Seção EUA · CDS NVIDIA 5A (indicativo)**: CNBC `NVDACD5` sem chave (last + 5d/1m/3m + máx/mín 5A), gráfico no clique via log local, `--dump`; contrato só existe desde nov/25 (Investing 404, ICE/S&P paywall), sem série 5-10 anos em fonte grátis |
+| **v8.7** | **CÂMBIO · USDT/BRL** substitui o antigo campo USD/BRL fiat: título/rótulo novos (`1 USDT = R$ ...`), cadeia de **4 exchanges** Binance (bookTicker; api → espelho vision) → Bybit → Bitget → BitPreco (mid bid/ask ou buy/sell, cooldown por fonte, 429 = falha dupla), cache 24h e **nunca** fallback fiat; histórico do clique com klines Binance → Bybit → CoinGecko → Bitget → log local; migração descarta o `usdbrl` fiat do cache; `fetch_fx`/derivações de ouro BRL, China e cobre **intactos** (escopo escolhido); `--dump`, menu, README e suite `test_usdtbrl.py` (mocks + 8.000+ casos de fuzz + live opcional) |
 
 ## Licença
 

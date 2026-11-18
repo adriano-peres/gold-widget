@@ -403,7 +403,8 @@ class TestFetchHistoryCache(unittest.TestCase):
         fx = _mk_hist(10, base=5.0)
         targets = {"_hist_paxg": (pts, "Binance PAXG"), "_hist_yahoo": (pts, "Yahoo"),
                    "_hist_copper": (pts, "Investing.com (API)"),
-                   "_hist_fx": (fx, "awesomeapi"), "_hist_sge": (pts, "SGE"),
+                   "_hist_fx": (fx, "awesomeapi"), "_hist_usdtbrl": (fx, "Binance"),
+                   "_hist_sge": (pts, "SGE"),
                    "_hist_em": (pts, "Eastmoney"), "_hist_fred": (pts, "FRED"),
                    "_hist_cds": (pts, "Investing"), "_hist_nvda": (pts, "CNBC"),
                    "_hist_yield": (pts, "Investing"),
@@ -423,11 +424,12 @@ class TestFetchHistoryCache(unittest.TestCase):
                     self.fail(f"{key} sem rota: {e}")
                 self.assertGreaterEqual(len(res["points"]), 2, key)
 
-    def test_usdbrl_tem_rota(self):
+    def test_usdtbrl_tem_rota(self):
         fx = _mk_hist(10, base=5.0)
-        with patch.object(gw, "_hist_fx", return_value=(fx, "awesomeapi")):
-            res = gw.fetch_history("usdbrl", 7, {})
+        with patch.object(gw, "_hist_usdtbrl", return_value=(fx, "Binance")):
+            res = gw.fetch_history("usdtbrl", 7, {})
             self.assertGreaterEqual(len(res["points"]), 2)
+            self.assertIn("Binance", res["src"])
 
 
 class TestCopperP2(unittest.TestCase):
@@ -524,6 +526,7 @@ class TestCacheFirstP0B(unittest.TestCase):
         fx = _mk_hist(40, base=5.0)
         targets = {"_hist_paxg": (pts, "PAXG"), "_hist_yahoo": (pts, "Yahoo"),
                    "_hist_copper": (pts, "CU"), "_hist_fx": (fx, "FX"),
+                   "_hist_usdtbrl": (fx, "Binance"),
                    "_hist_sge": (pts, "SGE"), "_hist_em": (pts, "EM"),
                    "_hist_fred": (pts, "FRED"), "_hist_cds": (pts, "CDS"),
                    "_hist_nvda": (pts, "CNBC"),
@@ -610,10 +613,11 @@ class TestBackfillUsdbrlP0C(unittest.TestCase):
             gw.backfill_hist_log(store)
             self.assertEqual(len(store["spot_usd"]), 10)
 
-    def test_usdbrl_meta_e_formato(self):
-        self.assertIn("usdbrl", gw.HIST_META)
-        self.assertIn(7, gw.HIST_META["usdbrl"]["ranges"])
-        self.assertIn("R$", gw.HIST_META["usdbrl"]["fmt"](5.1234))
+    def test_usdtbrl_meta_e_formato(self):
+        self.assertIn("usdtbrl", gw.HIST_META)
+        self.assertIn("USDT/BRL", gw.HIST_META["usdtbrl"]["title"])
+        self.assertIn(7, gw.HIST_META["usdtbrl"]["ranges"])
+        self.assertIn("R$", gw.HIST_META["usdtbrl"]["fmt"](5.1234))
 
 
 class TestFuzzMilhares(unittest.TestCase):

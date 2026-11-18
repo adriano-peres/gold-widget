@@ -530,6 +530,19 @@ v5.8:
       _tray_refresh_soon no fim do _poll_once_impl) + tick de 5 s
       (_tray_refresh_tick) + _render: o valor da barra acompanha o
       widget periodicamente, como o usuário exigiu.
+  v8.7 (ESTA VERSAO):
+    * CÂMBIO · USDT/BRL: o campo visível deixa de usar dólar fiat e passa
+      a cotar o par USDT/BRL (stablecoin) em exchanges, com valor
+      "1 USDT = R$ ...". Cadeia: Binance bookTicker (api + espelho
+      data-api) -> Bybit -> Bitget -> BitPreco; mid = (bid+ask)/2 ou
+      (buy+sell)/2; cooldown por fonte; cache 24h; se TODAS caírem, "—"
+      (nunca cai em fiat).
+    * Histórico do clique: Binance klines -> Bybit -> CoinGecko
+      (market_chart, precisão cheia) -> Bitget -> log local; o antigo
+      gráfico USD/BRL fiat foi aposentado junto com o campo.
+    * Fora do campo visível NADA muda: fetch_fx (USD/CNY, CNY/BRL) e as
+      derivações de ouro BRL, China e cobre continuam fiat (escopo
+      escolhido pelo usuário).
   Fonte principal do spot: goldprice.dev. Stdlib apenas (tkinter+urllib).
   """
 
@@ -588,36 +601,45 @@ FX_JSD_HIST   = ("https://cdn.jsdelivr.net/npm/@fawazahmed0/"
 PAXG_KLINES_OKX = ("https://www.okx.com/api/v5/market/candles"
                    "?instId=PAXG-USDT&bar=1Dutc&limit=8")
 
-# ------------- CONFIG · USD/BRL (campo visível, v8.2) ---------------------
-# Cadeia do campo "CÂMBIO · USD/BRL" (só o valor, mid). 10 degraus, cada
-# falha cai no próximo e se o próximo falhar cai em outro. Intraday antes
-# do BCB oficial (PTAX = fechamento diário, ~0,5% atrás do intraday em
-# horário de pregão). Fontes gratuitas sem chave, validadas 24/09/2026.
-USDBRL_REFETCH = 90                             # igual o poll do spot
-USDBRL_MAX_AGE  = 24 * 3600                     # cache vale 24h se a cadeia cair
-AAPI_USDBRL     = "https://economia.awesomeapi.com.br/json/last/USD-BRL"
-AAPI_ALL        = "https://economia.awesomeapi.com.br/json/all"
-YAHOO_UBRL_Q2   = ("https://query2.finance.yahoo.com/v8/finance/chart/USDBRL=X"
-                   "?range=1d&interval=5m")
-YAHOO_UBRL_Q1   = ("https://query1.finance.yahoo.com/v8/finance/chart/USDBRL=X"
-                   "?range=1d&interval=5m")
-TE_USDBRL_URL   = "https://tradingeconomics.com/brazil/currency"
-FLOATRATES_URL  = "https://www.floatrates.com/daily/usd.json"
-FX_JSD_PAGES    = ("https://latest.currency-api.pages.dev/v1/currencies/usd.json")
-FX_JSD_BRL_PG   = ("https://latest.currency-api.pages.dev/v1/currencies/brl.json")
-FX_FRA          = "https://api.frankfurter.dev/v1/latest?base=USD&symbols=BRL"
-BCB_SGS_ULT     = ("https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}"
-                   "/dados/ultimos/1?formato=json")
-OLINDA_DIA      = ("https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
-                   "CotacaoDolarDia(dataCotacao=@dataCotacao)"
-                   "?@dataCotacao='{date}'&$format=json")
+# ------------- CONFIG · USDT/BRL (campo visível, v8.7) --------------------
+# Cadeia do campo "CÂMBIO · USDT/BRL" (só o valor, mid). A cadeia fiat
+# USD/BRL (awesomeapi/Yahoo/PTAX) foi APOSENTADA a pedido do usuário:
+# o awesomeapi nem tem USDT-BRL — pedir USDT-BRL devolve "USDBRLT"
+# (dólar turismo!) e o valor sairia errado. Agora só exchanges com livro
+# real USDT/BRL, sem chave, em cascata (falha -> próximo até acabar):
+#   1º Binance bookTicker (host api + espelho data-api; MESMO livro);
+#   2º Bybit tickers (bid1/ask1); 3º Bitget tickers (bidPr/askPr);
+#   4º BitPreco ticker (buy/sell; exchange BR/PIX).
+# Cada fonte tem cooldown próprio (padrão v6.4; 429 = falha dupla). Se a
+# cadeia inteira cair, o chamador mantém o cache por até 24h; depois "—".
+# NUNCA cai em dólar fiat (semântica USDT pura, escolha do usuário).
+USDTBRL_REFETCH = 90                            # igual o poll do spot
+USDTBRL_MAX_AGE = 24 * 3600                     # cache vale 24h se a cadeia cair
+BINANCE_UBRL_BOOK = ("https://api.binance.com/api/v3/ticker/bookTicker"
+                     "?symbol=USDTBRL")
+BINANCE_UBRL_BOOK_VISION = ("https://data-api.binance.vision/api/v3/"
+                            "ticker/bookTicker?symbol=USDTBRL")
+BYBIT_UBRL_TICKER = ("https://api.bybit.com/v5/market/tickers"
+                     "?category=spot&symbol=USDTBRL")
+BITGET_UBRL_TICKER = ("https://api.bitget.com/api/v2/spot/market/tickers"
+                      "?symbol=USDTBRL")
+BITPRE_UBRL_TICKER = "https://api.bitpreco.com/usdt-brl/ticker"
+# Histórico (klines diárias; closes em UTC, 1 ponto por dia):
+BINANCE_UBRL_KLINES = ("https://api.binance.com/api/v3/klines"
+                       "?symbol=USDTBRL&interval=1d&limit={n}")
+BYBIT_UBRL_KLINE = ("https://api.bybit.com/v5/market/kline"
+                    "?category=spot&symbol=USDTBRL&interval=D&limit={n}")
+BITGET_UBRL_CANDLES = ("https://api.bitget.com/api/v2/spot/market/candles"
+                       "?symbol=USDTBRL&granularity=1day&limit={n}")
+COINGECKO_UBRL_CHART = ("https://api.coingecko.com/api/v3/coins/tether/"
+                        "market_chart?vs_currency=brl&days={days}"
+                        "&interval=daily")
+# PTAX/Olinda continuam só p/ o histórico fiat das derivações (spot_brl);
+# NÃO são usados no campo visível USDT/BRL.
 OLINDA_PER      = ("https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
                    "CotacaoDolarPeriodo(dataInicial=@dataInicial,"
                    "dataFinalCotacao=@dataFinalCotacao)"
                    "?@dataInicial='{d0}'&@dataFinalCotacao='{d1}'&$format=json")
-BCB_SOAP_URL    = "https://www3.bcb.gov.br/wssgs/services/FachadaWSSGS"
-SGS_COMPRA      = 10813                         # dólar comercial compra (PTAX)
-SGS_VENDA       = 1                             # dólar comercial venda (PTAX)
 STATE_DIR     = os.path.expanduser("~/.local/share/gold-widget")
 CACHE_FILE    = os.path.join(STATE_DIR, "last_price.json")
 LOG_FILE      = os.path.join(STATE_DIR, "widget.log")
@@ -1619,8 +1641,9 @@ def _hist_fx_olinda(pair, days):
 
 
 def _hist_fx(pair, days):
-    """Histórico de câmbio com cadeia perfeita (espelha o fetch_usdbrl):
-    awesomeapi -> frankfurter -> FRED -> Olinda (só USD-BRL). Cada degrau
+    """Histórico de câmbio FIAT das derivações (spot_brl/BRL por grama):
+    awesomeapi -> frankfurter -> FRED -> Olinda (só USD-BRL). NÃO é a
+    cadeia do campo visível USDT/BRL (essa é `_hist_usdtbrl`). Cada degrau
     logado; cadeia morta levanta com os erros (o fetch_history cai pro log
     local)."""
     days = int(days)
@@ -1641,6 +1664,111 @@ def _hist_fx(pair, days):
             errs.append(f"{name}: {e}")
             log(f"hist fx {pair}: {name} falhou ({e})")
     raise RuntimeError(f"FX {pair} sem serie (" + "; ".join(errs) + ")")
+
+
+def _ubrl_daily(rows, close_i=4):
+    """Normaliza candles/klines heterogêneos em [(YYYY-MM-DD, close)] UTC.
+    Linha padrão: [ts_ms, open, high, low, close, ...] (Binance/Bybit/
+    Bitget). CoinGecko usa [ts_ms, price] -> close_i=1. Deduplica por dia
+    (último vence), descarta lixo/fora de faixa e ordena."""
+    by = {}
+    for r in rows or []:
+        try:
+            ts = float(r[0]) / 1000.0
+            v = float(r[close_i])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not math.isfinite(v) or not (1.0 <= v <= 20.0):
+            continue
+        try:
+            dt = datetime.fromtimestamp(ts, timezone.utc).date().isoformat()
+        except (OverflowError, OSError, ValueError):
+            continue
+        by[dt] = v
+    return sorted(by.items())
+
+
+def _hist_usdtbrl_binance(days):
+    """1. Binance klines diárias USDTBRL (desde set/2020; limit máx 1000).
+    Fecha no UTC; o candle de hoje é parcial (fecha = último preço)."""
+    days = int(days)
+    n = max(2, min(days + 2, 1000))
+    d = _get_json(BINANCE_UBRL_KLINES.format(n=n),
+                  {"User-Agent": BROWSER_UA}, timeout=15)
+    if not isinstance(d, list) or not d:
+        raise ValueError("Binance sem klines USDTBRL")
+    pts = _ubrl_daily(d)
+    if len(pts) < 2:
+        raise ValueError(f"Binance USDTBRL: {len(pts)} ponto(s)")
+    return (pts[-days:] if len(pts) > days else pts), "Binance USDTBRL"
+
+
+def _hist_usdtbrl_bybit(days):
+    """2. Bybit klines diárias (lista vem do mais novo p/ o mais velho;
+    _ubrl_daily ordena). USDTBRL listado desde jun/2024 (cobre 1A)."""
+    days = int(days)
+    n = max(2, min(days + 2, 400))
+    d = _get_json(BYBIT_UBRL_KLINE.format(n=n),
+                  {"User-Agent": BROWSER_UA}, timeout=15)
+    if int(d.get("retCode", -1)) != 0:
+        raise ValueError(f"Bybit retCode {d.get('retCode')}: {d.get('retMsg')}")
+    res = d.get("result") or {}
+    if res.get("symbol") and str(res["symbol"]) != "USDTBRL":
+        raise ValueError(f"Bybit símbolo inesperado: {res['symbol']}")
+    pts = _ubrl_daily(res.get("list") or [])
+    if len(pts) < 2:
+        raise ValueError(f"Bybit USDTBRL: {len(pts)} ponto(s)")
+    return (pts[-days:] if len(pts) > days else pts), "Bybit USDTBRL"
+
+
+def _hist_usdtbrl_coingecko(days):
+    """3. CoinGecko market_chart (tether/BRL, agregado por volume; precisão
+    cheia, 1 ponto/dia com interval=daily). Fallback independente das
+    exchanges; não serve p/ o preço ao vivo (simple/price arredonda em 2
+    casas), mas serve bem p/ série histórica."""
+    days = int(days)
+    req_days = max(7, min(days + 5, 365))
+    d = _get_json(COINGECKO_UBRL_CHART.format(days=req_days),
+                  {"User-Agent": BROWSER_UA}, timeout=20)
+    pts = _ubrl_daily(d.get("prices") or [], close_i=1)
+    if len(pts) < 2:
+        raise ValueError(f"CoinGecko USDTBRL: {len(pts)} ponto(s)")
+    return (pts[-days:] if len(pts) > days else pts), "CoinGecko tether/BRL"
+
+
+def _hist_usdtbrl_bitget(days):
+    """4. Bitget candles diários. A API entrega no máx. ~300 candles
+    (conferido: limit=400 devolve 300), então fica por último: cobre 7/30/
+    90/180 dias, mas 1A fica com ~10 meses se as 3 fontes acima caírem."""
+    days = int(days)
+    n = max(2, min(days + 2, 300))
+    d = _get_json(BITGET_UBRL_CANDLES.format(n=n),
+                  {"User-Agent": BROWSER_UA}, timeout=15)
+    if str(d.get("code")) not in ("0", "00000"):
+        raise ValueError(f"Bitget code {d.get('code')}: {d.get('msg')}")
+    pts = _ubrl_daily(d.get("data") or [])
+    if len(pts) < 2:
+        raise ValueError(f"Bitget USDTBRL: {len(pts)} ponto(s)")
+    return (pts[-days:] if len(pts) > days else pts), "Bitget USDTBRL"
+
+
+def _hist_usdtbrl(days):
+    """Série diária USDT/BRL (v8.7): Binance -> Bybit -> CoinGecko ->
+    Bitget. Exchange primeiro (livro real), agregador depois; cada falha
+    cai no próximo. Se TODOS falharem, levanta e o fetch_history cai no
+    log local (mesmo padrão dos outros ativos)."""
+    errs = []
+    for name, fn in (("Binance", _hist_usdtbrl_binance),
+                     ("Bybit", _hist_usdtbrl_bybit),
+                     ("CoinGecko", _hist_usdtbrl_coingecko),
+                     ("Bitget", _hist_usdtbrl_bitget)):
+        try:
+            pts, tag = fn(days)
+            return pts, tag
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+            log(f"hist USDT/BRL: {name} falhou ({e})")
+    raise RuntimeError("USDT/BRL sem série (" + "; ".join(errs) + ")")
 
 
 def _hist_sge(instid, days):
@@ -2273,8 +2401,8 @@ def backfill_hist_log(store):
             return _hist_join([(d, p / TROY_OZ_GRAMS) for d, p in paxg],
                               dict(fx))
         jobs.append(("spot_brl", _brl))
-    if _need("usdbrl", "usdbrl"):
-        jobs.append(("usdbrl", lambda: _hist_fx("USD-BRL", 365)[0]))
+    if _need("usdtbrl", "usdtbrl"):
+        jobs.append(("usdtbrl", lambda: _hist_usdtbrl(365)[0]))
     if _need("copper", "copper"):
         jobs.append(("copper", lambda: _hist_fred(["PCOPPUSDM"], 900)[0]))
     if _need("fuel_gas", "fuel_gas"):
@@ -2321,7 +2449,7 @@ HIST_META = {
                    "fmt": lambda v: f"R$ {fmt_brl(v)}/g",
                    "yfmt": lambda v: fmt_brl(v).split(",")[0],
                    "ranges": (7, 30, 90, 180, 365)},
-    "usdbrl":     {"title": "Câmbio · USD/BRL (R$)",
+    "usdtbrl":    {"title": "Câmbio · USDT/BRL (R$)",
                    "fmt": lambda v: f"R$ {fmt_fx4(v)}",
                    "yfmt": lambda v: f"{v:.2f}".replace(".", ","),
                    "ranges": (7, 30, 90, 180, 365)},
@@ -2488,7 +2616,7 @@ def fetch_history(key, days=30, hist_log=None):
         note = f"{bank_name} acompanha o fisico: serie SGE de referencia"
     # Chave desconhecida (typo/programação) nunca cai no cache: levanta
     # direto em vez de mascarar com série velha de outra chave.
-    _KNOWN = {"spot_usd", "spot_brl", "usdbrl", "copper", "cu_shfe", "gc_f",
+    _KNOWN = {"spot_usd", "spot_brl", "usdtbrl", "copper", "cu_shfe", "gc_f",
               "ho_f", "brent", "urals", "sc_f", "murban", "sge_au9999",
               "sge_autd", "shfe", "base_cn", "fuel_gas", "fuel_diesel",
               "cds_5y", "nvda_5y", "br_yield", "us_yield", "urea_me", "urea_br",
@@ -2531,10 +2659,10 @@ def fetch_history(key, days=30, hist_log=None):
     try:
         if base == "spot_usd":
             pts, src = _hist_paxg(days)
-        elif base == "usdbrl":
-            # P0-C: mesma cadeia do preço visível (awesomeapi -> frankfurter
-            # -> FRED -> Olinda), só que em série histórica.
-            pts, src = _hist_fx("USD-BRL", days)
+        elif base == "usdtbrl":
+            # v8.7: série USDT/BRL (Binance -> Bybit -> CoinGecko -> Bitget);
+            # se tudo falhar, o fluxo cai no log local (regra geral).
+            pts, src = _hist_usdtbrl(days)
         elif base == "spot_brl":
             paxg, s1 = _hist_paxg(days + 10)
             fx, s2 = _hist_fx("USD-BRL", days + 10)
@@ -2754,7 +2882,7 @@ def fmt_pp(v):
     return f"{s}pp"
 
 def fmt_fx4(v):
-    """5,1526 (pt-BR, 4 decimais) — par cambial USD/BRL."""
+    """5,1526 (pt-BR, 4 decimais) — par cambial USDT/BRL."""
     s = f"{v:,.4f}"
     return s.replace(",", "\u00a0").replace(".", ",").replace("\u00a0", ".")
 
@@ -2985,228 +3113,127 @@ def _fx_fresh(fx):
     except Exception:
         return False
 
-# ------------------- FETCH · USD/BRL (campo visível, v8.2) -----------------
-# Só o campo "CÂMBIO · USD/BRL". NÃO mexe no fetch_fx (derivações). Mid =
-# (compra+venda)/2 ou (bid+ask)/2; fonte de 1 número usa o número direto.
+# ------------------- FETCH · USDT/BRL (campo visível, v8.7) -----------------
+# Só o campo "CÂMBIO · USDT/BRL". NÃO mexe no fetch_fx (derivações fiat).
+# Mid = (bid+ask)/2 ou (buy+sell)/2; fonte de 1 número usa o número direto.
+# Cadeia: Binance (api -> espelho vision) -> Bybit -> Bitget -> BitPreco.
 # Cada degrau tem nome/cooldown próprio (padrão v6.4): falha cai no próximo
-# automaticamente, e se o próximo falhar cai em outro, até acabar.
+# automaticamente, e se o próximo falhar cai em outro, até acabar. Sem fiat.
 
-def _mid(a, b):
-    """Mid de um par compra/venda ou bid/ask; 1 número só vira o mid."""
-    if a is None and b is None:
-        raise ValueError("sem cotação")
-    if a is None:
-        return float(b)
-    if b is None:
-        return float(a)
-    return (float(a) + float(b)) / 2.0
+def _num_pos(v):
+    """float > 0 e finito; None p/ lixo/zero/negativo/NaN/inf."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if math.isfinite(x) and x > 0 else None
 
-def _ok_usdbrl(r):
-    """Valida o mid: tem que ser um USD/BRL plausível."""
+def _mid_price(a, b):
+    """Mid de bid/ask (ou buy/sell) ignorando lado ausente/zerado."""
+    x, y = _num_pos(a), _num_pos(b)
+    if x is None and y is None:
+        raise ValueError("sem preço")
+    if x is None:
+        return y
+    if y is None:
+        return x
+    return (x + y) / 2.0
+
+def _ok_usdtbrl(r):
+    """Valida o mid: tem que ser um USDT/BRL plausível e finito."""
     try:
         r = float(r)
     except (TypeError, ValueError):
-        raise ValueError(f"USD/BRL inválido: {r!r}")
-    if not (1.0 <= r <= 20.0):
-        raise ValueError(f"USD/BRL fora de faixa: {r}")
+        raise ValueError(f"USDT/BRL inválido: {r!r}")
+    if not math.isfinite(r) or not (1.0 <= r <= 20.0):
+        raise ValueError(f"USDT/BRL fora de faixa: {r}")
     return r
 
-def _usdbrl_awesomeapi():
-    """1. awesomeapi: bid/ask do par USDBRL (intraday BR). Reserva /all."""
+def _usdtbrl_binance():
+    """1. Binance bookTicker (bid/ask). Host api + espelho data-api (MESMO
+    livro, host diferente): cobre 429/bloqueio do principal sem trocar de
+    fonte. É o livro USDT/BRL mais profundo (~R$ 80 mi/24h)."""
     errs = []
-    for url in (AAPI_USDBRL, AAPI_ALL):
+    for url in (BINANCE_UBRL_BOOK, BINANCE_UBRL_BOOK_VISION):
         try:
             d = _get_json(url, {"User-Agent": BROWSER_UA}, timeout=10)
-            u = d.get("USDBRL") or d.get("USD") or {}
-            return _ok_usdbrl(_mid(_to_float(u.get("bid")),
-                                   _to_float(u.get("ask"))))
+            sym = d.get("symbol")
+            if sym and str(sym) != "USDTBRL":
+                raise ValueError(f"Binance símbolo inesperado: {sym}")
+            return _ok_usdtbrl(_mid_price(d.get("bidPrice"),
+                                          d.get("askPrice")))
         except Exception as e:
-            errs.append(f"{url.split('/')[-1]}: {e}")
-    raise ValueError("awesomeapi (" + "; ".join(errs) + ")")
+            errs.append(f"{url.split('/')[2]}: {e}")
+    raise ValueError("Binance (" + "; ".join(errs) + ")")
 
-def _usdbrl_yahoo():
-    """2. Yahoo USDBRL=X (chart). q2 -> q1 em erro/429. Usa bid/ask se
-    vierem; senão regularMarketPrice."""
-    errs = []
-    for url in (YAHOO_UBRL_Q2, YAHOO_UBRL_Q1):
-        try:
-            _yahoo_throttle()
-            d = _get_json(url, {"User-Agent": BROWSER_UA}, timeout=10)
-            res = (d.get("chart") or {}).get("result") or []
-            if not res:
-                raise ValueError("sem result")
-            meta = res[0].get("meta") or {}
-            b = _to_float(meta.get("regularMarketBid"))
-            a = _to_float(meta.get("regularMarketAsk"))
-            if b is not None or a is not None:
-                return _ok_usdbrl(_mid(b, a))
-            p = _to_float(meta.get("regularMarketPrice"))
-            if p is None:
-                raise ValueError("sem preço")
-            return _ok_usdbrl(p)
-        except Exception as e:
-            errs.append(str(e))
-    raise ValueError("Yahoo (" + "; ".join(errs) + ")")
+def _usdtbrl_bybit():
+    """2. Bybit spot tickers: bid1Price/ask1Price; lastPrice se o livro
+    vier sem um dos lados. retCode != 0 = erro da API."""
+    d = _get_json(BYBIT_UBRL_TICKER, {"User-Agent": BROWSER_UA}, timeout=10)
+    if int(d.get("retCode", -1)) != 0:
+        raise ValueError(f"Bybit retCode {d.get('retCode')}: {d.get('retMsg')}")
+    lst = (d.get("result") or {}).get("list") or []
+    if not lst:
+        raise ValueError("Bybit sem ticker USDTBRL")
+    t = lst[0] or {}
+    if t.get("symbol") and str(t["symbol"]) != "USDTBRL":
+        raise ValueError(f"Bybit símbolo inesperado: {t['symbol']}")
+    if _num_pos(t.get("bid1Price")) is None and _num_pos(t.get("ask1Price")) is None:
+        return _ok_usdtbrl(t.get("lastPrice"))
+    return _ok_usdtbrl(_mid_price(t.get("bid1Price"), t.get("ask1Price")))
 
-def _usdbrl_te():
-    """3. TradingEconomics /brazil/currency — scrape market_last (mesmo
-    scraper do HO=F/ureia/enxofre)."""
-    d = _fetch_te_commodity(TE_USDBRL_URL, 20)
-    return _ok_usdbrl(d["price"])
+def _usdtbrl_bitget():
+    """3. Bitget spot tickers: bidPr/askPr; lastPr se o livro vier sem um
+    dos lados. code 00000 = sucesso."""
+    d = _get_json(BITGET_UBRL_TICKER, {"User-Agent": BROWSER_UA}, timeout=10)
+    if str(d.get("code")) not in ("0", "00000"):
+        raise ValueError(f"Bitget code {d.get('code')}: {d.get('msg')}")
+    data = d.get("data") or []
+    if not data:
+        raise ValueError("Bitget sem ticker USDTBRL")
+    t = data[0] or {}
+    if t.get("symbol") and str(t["symbol"]) != "USDTBRL":
+        raise ValueError(f"Bitget símbolo inesperado: {t['symbol']}")
+    if _num_pos(t.get("bidPr")) is None and _num_pos(t.get("askPr")) is None:
+        return _ok_usdtbrl(t.get("lastPr"))
+    return _ok_usdtbrl(_mid_price(t.get("bidPr"), t.get("askPr")))
 
-def _usdbrl_floatrates():
-    """4. floatrates: usd.json -> brl.rate (intraday)."""
-    d = _get_json(FLOATRATES_URL, {"User-Agent": BROWSER_UA}, timeout=10)
-    return _ok_usdbrl(_to_float((d.get("brl") or {}).get("rate")))
+def _usdtbrl_bitpreco():
+    """4. BitPreco (exchange brasileira/PIX): buy/sell são bid/ask do
+    livro; last é o último negócio. success=false = API recusou."""
+    d = _get_json(BITPRE_UBRL_TICKER, {"User-Agent": BROWSER_UA}, timeout=10)
+    if not d.get("success"):
+        raise ValueError(f"BitPreco success={d.get('success')}")
+    if d.get("market") and str(d["market"]) != "USDT-BRL":
+        raise ValueError(f"BitPreco par inesperado: {d['market']}")
+    if _num_pos(d.get("buy")) is None and _num_pos(d.get("sell")) is None:
+        return _ok_usdtbrl(d.get("last"))
+    return _ok_usdtbrl(_mid_price(d.get("buy"), d.get("sell")))
 
-def _usdbrl_currency_api():
-    """5. currency-api: usd.brl nos 2 espelhos (pages.dev FRESCO 1º — o
-    jsDelivr @latest fica preso na versão do pacote e serve cotação velha;
-    validado 24/09/2026: jsDelivr 5,1015 vs pages.dev 5,1672). Reserva o
-    inverso 1/brl.usd."""
-    errs = []
-    for url in (FX_JSD_PAGES, FX_JSD):
-        try:
-            d = _get_json(url, timeout=12)
-            r = _to_float((d.get("usd") or {}).get("brl"))
-            if r:
-                return _ok_usdbrl(r)
-            raise ValueError("sem usd.brl")
-        except Exception as e:
-            errs.append(str(e))
-    for url in (FX_JSD_BRL_PG,):
-        try:
-            d = _get_json(url, timeout=12)
-            inv = _to_float((d.get("brl") or {}).get("usd"))
-            if inv and inv > 0:
-                return _ok_usdbrl(1.0 / inv)
-            raise ValueError("sem brl.usd")
-        except Exception as e:
-            errs.append(f"inv: {e}")
-    raise ValueError("currency-api (" + "; ".join(errs) + ")")
-
-def _usdbrl_erapi():
-    """6. open.er-api.com: rates.BRL (diário)."""
-    d = _get_json(FX_ERAPI, timeout=10)
-    return _ok_usdbrl(_to_float((d.get("rates") or {}).get("BRL")))
-
-def _usdbrl_frankfurter():
-    """7. frankfurter.dev: rates.BRL (ECB, diário). O .app redireciona
-    p/ .dev — só .dev responde JSON."""
-    d = _get_json(FX_FRA, timeout=10)
-    return _ok_usdbrl(_to_float((d.get("rates") or {}).get("BRL")))
-
-def _bcb_sgs_valor(serie):
-    """Último valor do SGS (texto '5.1414') ou None se a série não
-    publicou (fds/feriado não pode matar o degrau inteiro)."""
-    try:
-        d = _get_json(BCB_SGS_ULT.format(serie=serie), timeout=10)
-    except Exception:
-        return None
-    if isinstance(d, list) and d:
-        return _to_float(d[-1].get("valor"))
-    return None
-
-def _usdbrl_bcb_sgs():
-    """8. BCB SGS: compra (10813) + venda (1) -> mid. Uma série morta
-    (fds) não derruba o degrau: usa a outra."""
-    c = _bcb_sgs_valor(SGS_COMPRA)
-    v = _bcb_sgs_valor(SGS_VENDA)
-    return _ok_usdbrl(_mid(c, v))
-
-def _olinda_mid(values):
-    """Mid da entrada PTAX mais recente de uma lista Olinda."""
-    best = None
-    for it in values or []:
-        ts = str(it.get("dataHoraCotacao") or "")
-        if best is None or ts > str(best.get("dataHoraCotacao") or ""):
-            best = it
-    if not best:
-        raise ValueError("Olinda sem cotação")
-    return _mid(_to_float(best.get("cotacaoCompra")),
-                _to_float(best.get("cotacaoVenda")))
-
-def _usdbrl_olinda():
-    """9. Olinda PTAX: CotacaoDolarDia (hoje; 13h BRT e pode sair vazio)
-    -> CotacaoDolarPeriodo (últimos dias) -> mid compra/venda."""
-    errs = []
-    for back in (0, 1, 2, 3):
-        day = (datetime.now(timezone.utc) - timedelta(days=back))
-        date = day.strftime("%m-%d-%Y")
-        try:
-            d = _get_json(OLINDA_DIA.format(date=date), timeout=12)
-            vals = d.get("value") or []
-            if vals:
-                return _ok_usdbrl(_olinda_mid(vals))
-            errs.append(f"dia {date} vazio")
-        except Exception as e:
-            errs.append(f"dia {date}: {e}")
-    try:
-        d0 = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%m-%d-%Y")
-        d1 = datetime.now(timezone.utc).strftime("%m-%d-%Y")
-        d = _get_json(OLINDA_PER.format(d0=d0, d1=d1), timeout=12)
-        return _ok_usdbrl(_olinda_mid(d.get("value") or []))
-    except Exception as e:
-        errs.append(f"periodo: {e}")
-    raise ValueError("Olinda (" + "; ".join(errs) + ")")
-
-_SOAP_ENV = (
-    '<?xml version="1.0" encoding="utf-8"?>'
-    '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
-    ' xmlns:pub="http://publico.servicos.wssgs.bcb.gov.br">'
-    '<soapenv:Header/><soapenv:Body><pub:getUltimoValorVO>'
-    '<pub:codigoSérie>{serie}</pub:codigoSérie>'
-    '</pub:getUltimoValorVO></soapenv:Body></soapenv:Envelope>'
-)
-
-def _bcb_soap_valor(serie):
-    """Espelho SOAP do SGS (host www3): último valor da série ou None."""
-    try:
-        xml = _http_post_raw(BCB_SOAP_URL, _SOAP_ENV.format(serie=serie),
-                             {"Content-Type": "text/xml; charset=utf-8",
-                              "SOAPAction": ""}, timeout=12)
-    except Exception:
-        return None
-    m = re.search(r"<svalor[^>]*>([0-9.]+)", xml)
-    return _to_float(m.group(1)) if m else None
-
-def _usdbrl_bcb_soap():
-    """10. BCB SOAP www3 (host espelho do SGS): compra+venda -> mid."""
-    c = _bcb_soap_valor(SGS_COMPRA)
-    v = _bcb_soap_valor(SGS_VENDA)
-    return _ok_usdbrl(_mid(c, v))
-
-def fetch_usdbrl():
-    """USD/BRL mid p/ o campo visível. Cadeia (v8.2, cooldown por fonte):
-    awesomeapi -> Yahoo -> TE -> floatrates -> currency-api -> er-api ->
-    frankfurter -> BCB SGS -> Olinda PTAX -> BCB SOAP. Cada falha cai no
-    próximo degrau automaticamente; se o próximo falhar cai em outro, até
-    acabar. O chamador segura o cache 24h quando levanta."""
+def fetch_usdtbrl():
+    """USDT/BRL mid p/ o campo visível. Cadeia (v8.7, cooldown por fonte):
+    Binance (api -> vision) -> Bybit -> Bitget -> BitPreco. Cada falha cai
+    no próximo degrau automaticamente; se o próximo falhar cai em outro,
+    até acabar. O chamador segura o cache 24h quando levanta."""
     errs = []
     chain = (
-        ("usdbrl-awesomeapi",    _usdbrl_awesomeapi),
-        ("usdbrl-yahoo",         _usdbrl_yahoo),
-        ("usdbrl-te",            _usdbrl_te),
-        ("usdbrl-floatrates",    _usdbrl_floatrates),
-        ("usdbrl-currency-api",  _usdbrl_currency_api),
-        ("usdbrl-er-api",        _usdbrl_erapi),
-        ("usdbrl-frankfurter",   _usdbrl_frankfurter),
-        ("usdbrl-bcb-sgs",       _usdbrl_bcb_sgs),
-        ("usdbrl-olinda",        _usdbrl_olinda),
-        ("usdbrl-bcb-soap",      _usdbrl_bcb_soap),
+        ("usdtbrl-binance",  _usdtbrl_binance),
+        ("usdtbrl-bybit",    _usdtbrl_bybit),
+        ("usdtbrl-bitget",   _usdtbrl_bitget),
+        ("usdtbrl-bitpreco", _usdtbrl_bitpreco),
     )
     for name, fn in chain:
         if not _src_due(name):
             continue                       # fonte em cooldown: pula p/ a próxima
         try:
-            rate = _ok_usdbrl(fn())        # validação extra (defesa em profundidade)
+            rate = _ok_usdtbrl(fn())       # validação extra (defesa em profundidade)
             _src_clear(name)
-            return {"rate": rate, "src": name.replace("usdbrl-", ""),
+            return {"rate": rate, "src": name.replace("usdtbrl-", ""),
                     "ts": time.time()}
         except Exception as e:
-            errs.append(f"{name.replace('usdbrl-', '')}: {e}")
-            _src_cooldown(name, USDBRL_REFETCH, str(e))
-    raise RuntimeError("USD/BRL sem fonte viva (" + "; ".join(errs) + ")")
+            errs.append(f"{name.replace('usdtbrl-', '')}: {e}")
+            _src_cooldown(name, USDTBRL_REFETCH, str(e))
+    raise RuntimeError("USDT/BRL sem fonte viva (" + "; ".join(errs) + ")")
 
 def fetch_goldprice_org(curr="USD"):
     """Spot Londres via goldprice.org (fallback do spot principal).
@@ -5638,6 +5665,15 @@ def load_cache():
     except Exception:
         return None
 
+def migrate_visible_fx_cache(last):
+    """v8.7: o campo visível virou USDT/BRL; o antigo "usdbrl" fiat não
+    pode ser exibido como USDT (instrumentos diferentes). Remove a chave
+    velha do cache e devolve o valor removido (ou None). Nunca levanta."""
+    try:
+        return last.pop("usdbrl", None)
+    except Exception:
+        return None
+
 def save_cache(data):
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
@@ -6319,6 +6355,9 @@ class GoldWidget:
         # REMOVIDO (2026-09-17): limpa resíduos de COMEX/China do cache antigo
         self.last.pop("china", None)
         self.last.pop("gc_fut", None)
+        # v8.7: o campo visível agora é USDT/BRL; o antigo "usdbrl" fiat
+        # não pode ser exibido como USDT (semânticas diferentes) -> descarta.
+        migrate_visible_fx_cache(self.last)
         self.baseline = self.last.get("baseline") or None
         self.spot_offline = True                 # até o 1º spot ok
         self._poll_lock = threading.Lock()       # poller x "Atualizar agora"
@@ -6400,14 +6439,14 @@ class GoldWidget:
                               font=("DejaVu Sans", 8))
         self.l_sub.pack(anchor="w", padx=12, pady=(0, 8))
 
-        # --------------- seção CÂMBIO · USD/BRL (v8.2) --------------------
+        # --------------- seção CÂMBIO · USDT/BRL (v8.7) -------------------
         # Só o valor (mid), estilo do spot do ouro. Sem rodapé/gráfico.
-        self.l_fx_title = tk.Label(self.body, text="CÂMBIO · USD/BRL", bg=BG,
+        self.l_fx_title = tk.Label(self.body, text="CÂMBIO · USDT/BRL", bg=BG,
                                    fg=TITLE, font=("DejaVu Sans", 9, "bold"))
         self.l_fx_title.pack(anchor="w", padx=12, pady=(8, 0))
-        self.l_usdbrl = tk.Label(self.body, text="—", bg=BG, fg=TXT_USD,
-                                 font=("DejaVu Sans", 13, "bold"))
-        self.l_usdbrl.pack(anchor="w", padx=12, pady=(0, 8))
+        self.l_usdtbrl = tk.Label(self.body, text="—", bg=BG, fg=TXT_USD,
+                                  font=("DejaVu Sans", 13, "bold"))
+        self.l_usdtbrl.pack(anchor="w", padx=12, pady=(0, 8))
 
         # --------------- seção COBRE (COMEX HG=F + SHFE CU0, v7.3) --------
         self.copper_frame = tk.Frame(self.body, bg=BG)
@@ -6594,7 +6633,7 @@ class GoldWidget:
             for _lbl, _hk in (
                     ("Ouro spot USD", "spot_usd"),
                     ("Ouro spot BRL", "spot_brl"),
-                    ("Câmbio USD/BRL", "usdbrl"),
+                    ("Câmbio USDT/BRL", "usdtbrl"),
                     ("Cobre (COMEX HG=F)", "copper"),
                     ("Cobre SHFE (China)", "cu_shfe"),
                     ("Gasolina EUA", "fuel_gas"),
@@ -6649,7 +6688,7 @@ class GoldWidget:
                          (self.l_brl_var_week, "spot_brl"),
                           (self.l_sub, None),
                           (self.l_fx_title, None),
-                           (self.l_usdbrl, "usdbrl"),
+                           (self.l_usdtbrl, "usdtbrl"),
                           (self.l_copper_sub, None),
                          (self.l_us_sub, None), (self.l_cds_sub, None),
                           (self.l_yield_sub, None),
@@ -7565,25 +7604,27 @@ class GoldWidget:
             self.last.pop("deus_rf", None)
             log("DEUS: cache >45 dias sem fonte; removido")
 
-        # ---- Câmbio · USD/BRL (v8.2): refetch 90s; cadeia 10 degraus
-        #      (intraday -> BCB); falha da cadeia mantém cache ≤24h ----
-        ub = self.last.get("usdbrl")
-        if _due("usdbrl", ub, USDBRL_REFETCH):
+        # ---- Câmbio · USDT/BRL (v8.7): refetch 90s; cadeia 4 exchanges
+        #      (Binance -> Bybit -> Bitget -> BitPreco); falha da cadeia
+        #      mantém cache ≤24h; NUNCA cai em dólar fiat ----
+        migrate_visible_fx_cache(self.last)   # aposenta o campo fiat antigo
+        ub = self.last.get("usdtbrl")
+        if _due("usdtbrl", ub, USDTBRL_REFETCH):
             try:
-                self.last["usdbrl"] = fetch_usdbrl()
-                _cooldown_clear("usdbrl")
+                self.last["usdtbrl"] = fetch_usdtbrl()
+                _cooldown_clear("usdtbrl")
             except Exception as e:
-                log(f"USD/BRL indisponível ({e}); mantendo cache")
-                _cooldown("usdbrl", USDBRL_REFETCH, str(e))
-        ub = self.last.get("usdbrl")
+                log(f"USDT/BRL indisponível ({e}); mantendo cache")
+                _cooldown("usdtbrl", USDTBRL_REFETCH, str(e))
+        ub = self.last.get("usdtbrl")
         try:
             _ub_ts = float((ub or {}).get("ts", 0) or 0)
         except Exception:
             _ub_ts = 0
         if isinstance(ub, dict) and (ub.get("rate") is None
-                   or time.time() - _ub_ts > USDBRL_MAX_AGE):
-            self.last.pop("usdbrl", None)
-            log("USD/BRL: cache >24h sem fonte; removido")
+                   or time.time() - _ub_ts > USDTBRL_MAX_AGE):
+            self.last.pop("usdtbrl", None)
+            log("USDT/BRL: cache >24h sem fonte; removido")
 
         # Re-commit final (idempotente com o early): garante ts/baseline
         # mesmo se fx mudou durante as seções lentas. Nunca levanta.
@@ -7694,9 +7735,9 @@ class GoldWidget:
             _dx = _L.get("deus_rf") or {}
             if _dx.get("value") is not None:
                 log_hist_point(_H, "deus_rf", _dx["value"])
-            _ub0 = _L.get("usdbrl") or {}
+            _ub0 = _L.get("usdtbrl") or {}
             if _ub0.get("rate"):
-                log_hist_point(_H, "usdbrl", _ub0["rate"])
+                log_hist_point(_H, "usdtbrl", _ub0["rate"])
             save_hist_log(_H)
         except Exception as e:
             log(f"falha no log de historico: {e}")
@@ -7832,8 +7873,8 @@ class GoldWidget:
         self.last.pop("china", None)
         self.last.pop("gc_fut", None)
 
-        # seção CÂMBIO · USD/BRL (v8.2)
-        self._render_usdbrl()
+        # seção CÂMBIO · USDT/BRL (v8.7)
+        self._render_usdtbrl()
 
         # seção COBRE · COMEX HG=F (v7.2)
         self._render_copper()
@@ -7938,24 +7979,24 @@ class GoldWidget:
         except Exception as e:
             log(f"render sub falhou: {e}")
 
-    def _render_usdbrl(self):
-        """Campo visível USD/BRL (v8.2): só o valor, mid 4 dec pt-BR.
+    def _render_usdtbrl(self):
+        """Campo visível USDT/BRL (v8.7): só o valor, mid 4 dec pt-BR.
         Cache ≤24h se a cadeia caiu; senão "—". Nunca levanta."""
         try:
-            d = self.last.get("usdbrl") or {}
+            d = self.last.get("usdtbrl") or {}
             rate = d.get("rate")
             try:
                 ts = float(d.get("ts", 0) or 0)
             except Exception:
                 ts = 0
-            if rate is None or time.time() - ts > USDBRL_MAX_AGE:
-                self.l_usdbrl.config(text="—")
+            if rate is None or time.time() - ts > USDTBRL_MAX_AGE:
+                self.l_usdtbrl.config(text="—")
                 return
-            self.l_usdbrl.config(text=f"US$ 1 = R$ {fmt_fx4(rate)}")
+            self.l_usdtbrl.config(text=f"1 USDT = R$ {fmt_fx4(rate)}")
         except Exception as e:
-            log(f"render usdbrl falhou: {e}")
+            log(f"render usdtbrl falhou: {e}")
             try:
-                self.l_usdbrl.config(text="—")
+                self.l_usdtbrl.config(text="—")
             except Exception:
                 pass
 
@@ -9594,10 +9635,10 @@ def dump():
     last = {}
     fx = None
     try:
-        u = fetch_usdbrl()
-        print(f"USD/BRL [{u['src']}]: {u['rate']:.4f} (mid)")
+        u = fetch_usdtbrl()
+        print(f"USDT/BRL [{u['src']}]: {u['rate']:.4f} (mid)")
     except Exception as e:
-        print(f"USD/BRL (10 fontes): FALHOU ({e})")
+        print(f"USDT/BRL (4 exchanges): FALHOU ({e})")
     try:
         fx = fetch_fx()
         last["fx"] = fx
@@ -9908,11 +9949,10 @@ def main():
         " AyatanaAppIndicator3 — menu Mostrar/Ocultar + Atualizar agora + Ver"
         " gráfico + Sair, label com spot BRL (R$/g, v8.4), ícone dourado gerado com"
         " Pillow; --show inicia visível; sem bandeja segue visível sem"
-        " quebrar; v8.2: + seção CÂMBIO · USD/BRL — linha só com o"
-        " valor mid e cadeia de 10 degraus awesomeapi -> Yahoo -> TE ->"
-        " floatrates -> currency-api -> er-api -> frankfurter -> BCB SGS ->"
-        " Olinda PTAX -> BCB SOAP, cache 24h; v8.1: + seção EUA · YIELD"
-        " GOVERNO TREASURY (UST bills/notes/bonds, dropdown por vencimento"
+        " quebrar; v8.7: seção CÂMBIO · USDT/BRL — linha só com o valor"
+        " mid (1 USDT = R$ ...) e cadeia de 4 exchanges Binance -> Bybit"
+        " -> Bitget -> BitPreco, cache 24h e NUNCA fiat; v8.1: + seção EUA"
+        " · YIELD GOVERNO TREASURY (UST bills/notes/bonds, dropdown por vencimento"
         " — cadeia Investing tabela www/m. -> TE -> instrumento -> API"
         " historical -> FRED DGS* -> cache 4d; v8.0: BRASIL · YIELD GOVERNO"
         " NOMINAL (LTN/NTN) com DROPDOWN por vencimento — cadeia Investing"

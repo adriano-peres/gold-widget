@@ -31,7 +31,7 @@ def _mk_widget():
     w.l_usd = MagicMock(); w.l_brl = MagicMock(); w.l_sub = MagicMock()
     w.l_usd_var = MagicMock(); w.l_usd_var_week = MagicMock()
     w.l_brl_var = MagicMock(); w.l_brl_var_week = MagicMock()
-    w.l_usdbrl = MagicMock()
+    w.l_usdtbrl = MagicMock()
     # mocks p/ _render não exigir sigs nem Tk real
     for m in ("_render_copper","_render_copper_sub","_render_us","_render_us_sub",
               "_render_cds","_render_cds_sub","_render_nvda","_render_nvda_sub",
@@ -176,12 +176,12 @@ class TestIsoladas(unittest.TestCase):
             st.enter_context(patch.object(gw, "try_fetch", side_effect=[({"price": 4000.0, "bid": 1, "ask": 1}, None), ({"price": 20000.0}, None)]))
             st.enter_context(patch.object(gw, "fetch_daily_baseline", return_value={"day": _today(), "paxg_open": 4000.0, "paxg_week_open": 3900.0, "fx_day_pct": 0.0, "fx_week_pct": 0.0}))
             st.enter_context(patch.object(gw, "collect_china", side_effect=lambda last: last.update({"fx": {"usdbrl": 5.0, "ts": time.time()}}) or None))
-            for n in ("fetch_copper","fetch_cu_shfe","fetch_us_fuel","fetch_cds_br","fetch_ho_future","fetch_urals","fetch_brent","fetch_sc","fetch_murban","fetch_urea_me","fetch_urea_br","fetch_sulfur","fetch_crb","fetch_deus","fetch_usdbrl"):
+            for n in ("fetch_copper","fetch_cu_shfe","fetch_us_fuel","fetch_cds_br","fetch_ho_future","fetch_urals","fetch_brent","fetch_sc","fetch_murban","fetch_urea_me","fetch_urea_br","fetch_sulfur","fetch_crb","fetch_deus","fetch_usdtbrl"):
                 if n == fail_name:
                     st.enter_context(patch.object(gw, n, side_effect=RuntimeError("morto")))
                 else:
                     if n in ("fetch_cds_br",): st.enter_context(patch.object(gw, n, return_value={"bps": 1, "ts": time.time()}))
-                    elif n in ("fetch_usdbrl",): st.enter_context(patch.object(gw, n, return_value={"rate": 5, "ts": time.time()}))
+                    elif n in ("fetch_usdtbrl",): st.enter_context(patch.object(gw, n, return_value={"rate": 5, "ts": time.time()}))
                     elif n in ("fetch_us_fuel",): st.enter_context(patch.object(gw, n, return_value={"gas": 1, "diesel": 1, "ts": time.time()}))
                     elif n in ("fetch_deus",): st.enter_context(patch.object(gw, n, return_value={"value": 1, "ts": time.time()}))
                     else: st.enter_context(patch.object(gw, n, return_value={"price": 1, "ts": time.time(), "usdcny_used": 6.5}))
@@ -201,7 +201,7 @@ class TestIsoladas(unittest.TestCase):
             w._poll_once_impl()
             self.assertEqual(w.last.get("usd_price"), 4000.0)
             self.assertTrue(sc.called)
-for _fn in ["fetch_copper","fetch_cu_shfe","fetch_us_fuel","fetch_cds_br","fetch_ho_future","fetch_urals","fetch_brent","fetch_murban","fetch_crb","fetch_deus","fetch_usdbrl","fetch_sulfur","fetch_urea_me","fetch_urea_br","fetch_yield_br","fetch_us_yield"]:
+for _fn in ["fetch_copper","fetch_cu_shfe","fetch_us_fuel","fetch_cds_br","fetch_ho_future","fetch_urals","fetch_brent","fetch_murban","fetch_crb","fetch_deus","fetch_usdtbrl","fetch_sulfur","fetch_urea_me","fetch_urea_br","fetch_yield_br","fetch_us_yield"]:
     def _mk(f=_fn):
         def _t(self): self._base(f)
         return _t
@@ -243,15 +243,15 @@ class TestFx(unittest.TestCase):
     def test_ts_str(self): self.assertFalse(gw._fx_fresh({"usdbrl": 5.0, "ts": "ontem"}))
     def test_str_ok(self): self.assertTrue(gw._fx_fresh({"usdbrl": "5.4", "ts": time.time()}))
     def test_ok_limites(self):
-        self.assertEqual(gw._ok_usdbrl(1.0), 1.0); self.assertEqual(gw._ok_usdbrl(20.0), 20.0)
+        self.assertEqual(gw._ok_usdtbrl(1.0), 1.0); self.assertEqual(gw._ok_usdtbrl(20.0), 20.0)
         for bad in (0.99, 20.01, "x", None):
-            with self.assertRaises(ValueError): gw._ok_usdbrl(bad)
+            with self.assertRaises(ValueError): gw._ok_usdtbrl(bad)
 
 class TestRender(unittest.TestCase):
     def test_ts_str(self):
         w = _mk_widget(); w.last = {"usd_price": 4000.0, "brl_price": 20000.0, "ts": "ontem", "usd_src": "goldprice.dev"}; w.spot_offline = True; w._render()
-    def test_usdbrl_corr(self):
-        w = _mk_widget(); w.last = {"usd_price": 4000.0, "brl_price": 20000.0, "ts": time.time(), "usdbrl": {"rate": "x", "ts": None}}; w._render_usdbrl()
+    def test_usdtbrl_corr(self):
+        w = _mk_widget(); w.last = {"usd_price": 4000.0, "brl_price": 20000.0, "ts": time.time(), "usdtbrl": {"rate": "x", "ts": None}}; w._render_usdtbrl()
     def test_pct_str(self):
         w = _mk_widget(); w.last = {"usd_price": 4000.0, "brl_price": 20000.0, "ts": time.time(), "usd_day_pct": "x"}; w._render()
 
@@ -266,7 +266,7 @@ class TestFuzz(unittest.TestCase):
         import random; rnd = random.Random(99)
         pool = [None, "", "abc", 0, float("nan"), float("inf"), 3.14, "5.15", 1.0, 20.0, 99]
         for i in range(500):
-            try: gw._ok_usdbrl(rnd.choice(pool))
+            try: gw._ok_usdtbrl(rnd.choice(pool))
             except ValueError: pass
     def test_fuzz_poll_100(self):
         import itertools

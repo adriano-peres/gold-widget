@@ -1,3 +1,22 @@
+gold-widget (8.7-1) unstable; urgency=medium
+
+  * CÂMBIO · USDT/BRL (v8.7): substitui o campo visível USD/BRL fiat por
+    USDT/BRL de exchanges, com rótulo "1 USDT = R$ ...". Cadeia sem chave:
+    Binance bookTicker (host api + espelho data-api.binance.vision) ->
+    Bybit -> Bitget -> BitPreco; mid = (bid+ask)/2 ou (buy+sell)/2;
+    cooldown por fonte (429 = falha dupla); cache 24h; se TODAS falharem
+    mostra "—" e NUNCA cai em dólar fiat.
+  * Histórico do clique: klines Binance -> Bybit -> CoinGecko
+    (market_chart, precisão cheia) -> Bitget -> log local; rota
+    fetch_history("usdtbrl") e HIST_META novos.
+  * Migração descarta o "usdbrl" fiat do cache antigo; fetch_fx
+    (USD/CNY, CNY/BRL) e derivações de ouro BRL/China/cobre intactos.
+  * Suite nova test_usdtbrl.py: parsers das 4 exchanges, cascata,
+    cooldowns, séries, render, migração, 8.000+ casos de fuzz e live
+    opcional (--live).
+
+ -- adrianodev1995 <adriano@a00s.com>  Wed, 18 Nov 2026 11:30:00 -0300
+
 gold-widget (8.5-1) unstable; urgency=medium
 
   * Seção CRÉDITO · DEUS-FREEZE RF v3.2: termômetro mensal 0-100
